@@ -4,7 +4,7 @@ import { useAuth } from "../context/AuthContext";
 const API_URL = import.meta.env.VITE_API_URL ?? "";
 
 export default function Profile() {
-  const { user, token, setUserFromServer } = useAuth();
+  const { token } = useAuth();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [profile, setProfile] = useState<any>(null);

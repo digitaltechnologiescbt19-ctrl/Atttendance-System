@@ -1,6 +1,7 @@
 {
   "scripts": {
-    "dev": "tsc --outDir dist --rootDir src --module Node16 --moduleResolution node16 && nodemon dist/server.js"
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

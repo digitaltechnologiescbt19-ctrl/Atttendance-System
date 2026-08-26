@@ -530,6 +530,125 @@ export const getStudentAttendance = async (
 };
 
 
+// GET TODAY'S SESSIONS FOR A STUDENT
+export const getStudentTodaysSessions = async (
+    req: Request,
+    res: Response
+) => {
+    try {
+        const { studentId } = req.params;
+        const authReq = req as any;
+        
+        // Authorization: student can only access their own data
+        if (authReq.userRole === "student") {
+            const userResult = await pool.query(
+                "SELECT linked_id FROM users WHERE id = $1 AND role = 'student' AND is_active = TRUE",
+                [authReq.userId]
+            );
+            if (userResult.rows.length === 0 || String(userResult.rows[0].linked_id) !== String(studentId)) {
+                return res.status(403).json({ message: "Access denied" });
+            }
+        } else if (authReq.userRole !== "admin" && authReq.userRole !== "lecturer") {
+            return res.status(403).json({ message: "Access denied" });
+        }
+
+        const result = await pool.query(
+            `
+            SELECT
+                s.id,
+                s.course_id,
+                s.session_date,
+                s.start_time,
+                s.end_time,
+                s.is_active,
+                s.qr_generated_at,
+                c.course_code,
+                c.course_name,
+                c.programme,
+                COALESCE(a.status, NULL) as attendance_status,
+                a.check_in_time
+            FROM student_courses sc
+            JOIN sessions s ON s.course_id = sc.course_id
+            JOIN courses c ON c.id = s.course_id
+            LEFT JOIN attendance a ON a.session_id = s.id AND a.student_id = sc.student_id
+            WHERE sc.student_id = $1 
+              AND s.session_date = CURRENT_DATE
+            ORDER BY s.start_time ASC
+            `,
+            [studentId]
+        );
+
+        res.json(result.rows);
+
+    } catch (error) {
+        console.error("Get student today's sessions error:", error);
+        res.status(500).json({
+            message: "Failed to retrieve today's sessions"
+        });
+    }
+};
+
+
+// GET UPCOMING SESSIONS FOR A STUDENT
+export const getStudentUpcomingSessions = async (
+    req: Request,
+    res: Response
+) => {
+    try {
+        const { studentId } = req.params;
+        const authReq = req as any;
+        
+        // Authorization: student can only access their own data
+        if (authReq.userRole === "student") {
+            const userResult = await pool.query(
+                "SELECT linked_id FROM users WHERE id = $1 AND role = 'student' AND is_active = TRUE",
+                [authReq.userId]
+            );
+            if (userResult.rows.length === 0 || String(userResult.rows[0].linked_id) !== String(studentId)) {
+                return res.status(403).json({ message: "Access denied" });
+            }
+        } else if (authReq.userRole !== "admin" && authReq.userRole !== "lecturer") {
+            return res.status(403).json({ message: "Access denied" });
+        }
+
+        const result = await pool.query(
+            `
+            SELECT
+                s.id,
+                s.course_id,
+                s.session_date,
+                s.start_time,
+                s.end_time,
+                s.is_active,
+                s.qr_generated_at,
+                c.course_code,
+                c.course_name,
+                c.programme,
+                COALESCE(a.status, NULL) as attendance_status,
+                a.check_in_time
+            FROM student_courses sc
+            JOIN sessions s ON s.course_id = sc.course_id
+            JOIN courses c ON c.id = s.course_id
+            LEFT JOIN attendance a ON a.session_id = s.id AND a.student_id = sc.student_id
+            WHERE sc.student_id = $1 
+              AND s.session_date >= CURRENT_DATE
+            ORDER BY s.session_date ASC, s.start_time ASC
+            LIMIT 5
+            `,
+            [studentId]
+        );
+
+        res.json(result.rows);
+
+    } catch (error) {
+        console.error("Get student upcoming sessions error:", error);
+        res.status(500).json({
+            message: "Failed to retrieve upcoming sessions"
+        });
+    }
+};
+
+
 // ============================================================
 // LECTURER CRUD OPERATIONS
 // ============================================================

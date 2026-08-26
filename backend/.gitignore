@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+*.log
+inspect-schema.js
+check-data.js
+enroll-oyelele.js
+find-student.js
+seed-test-data.js
+test-endpoints.js

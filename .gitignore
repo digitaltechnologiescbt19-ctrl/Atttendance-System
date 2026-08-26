@@ -1,0 +1,45 @@
+# ── Dependencies ──────────────────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.js
+
+# ── Build output ───────────────────────────────────────────────────────
+dist/
+dist-ssr/
+build/
+*.tsbuildinfo
+
+# ── Environment / Secrets  (NEVER commit these) ────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Logs ───────────────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ── OS / Editor ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ── Temp / debug scripts (not part of the app) ─────────────────────────
+backend/inspect-schema.js
+backend/check-data.js
+backend/enroll-oyelele.js
+backend/find-student.js
+backend/seed-test-data.js
+backend/test-endpoints.js
+test-phase5.js
+test-phase6.js

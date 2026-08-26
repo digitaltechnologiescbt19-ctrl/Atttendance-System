@@ -22,6 +22,8 @@ import {
     markAttendance,
     getAttendance,
     getStudentAttendance,
+    getStudentTodaysSessions,
+    getStudentUpcomingSessions,
     getDashboardSummary,
     getAttendanceReport,
     getAttendanceStats,
@@ -175,6 +177,13 @@ router.get("/records", authenticate, getAttendance);
 
 // Get attendance for one student
 router.get("/students/:studentId/attendance", authenticate, getStudentAttendance);
+
+// Get today's sessions for one student
+router.get("/students/:studentId/sessions/today", authenticate, getStudentTodaysSessions);
+
+// Get upcoming sessions for one student
+router.get("/students/:studentId/sessions/upcoming", authenticate, getStudentUpcomingSessions);
+
 // Get the authenticated student's report; identity is derived from the JWT.
 router.get("/students/me/report", authenticate, getStudentReport);
 /*
