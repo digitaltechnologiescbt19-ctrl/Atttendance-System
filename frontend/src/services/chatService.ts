@@ -1,4 +1,4 @@
-const API_URL = "http://localhost:5000/api/chat";
+const API_URL = `${import.meta.env.VITE_API_URL ?? ""}/api/chat`;
 
 export async function sendMessage(message: string) {
     const response = await fetch(API_URL, {
