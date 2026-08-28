@@ -11,7 +11,32 @@ dotenv.config();
 
 const app = express();
 
-app.use(cors());
+/* ------------------------------------------------------------------ */
+/*  CORS                                                                */
+/*  FRONTEND_URL is set in Vercel environment variables to the         */
+/*  deployed frontend URL e.g. https://your-app.vercel.app            */
+/*  Falls back to * in development.                                    */
+/* ------------------------------------------------------------------ */
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  "http://localhost:5173",
+  "http://localhost:3000",
+].filter(Boolean) as string[];
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (mobile apps, curl, Postman)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      // Also allow any *.vercel.app subdomain for preview deployments
+      if (/\.vercel\.app$/.test(origin)) return callback(null, true);
+      callback(new Error(`CORS blocked: ${origin}`));
+    },
+    credentials: true,
+  })
+);
+
 app.use(express.json());
 
 app.get("/", (_req, res) => {
