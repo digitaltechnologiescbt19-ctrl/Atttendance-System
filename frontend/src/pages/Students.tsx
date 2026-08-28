@@ -1,4 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
+
+const BASE_URL = import.meta.env.VITE_API_URL ?? "";
 import {
   HiOutlineUserPlus,
   HiOutlineArrowDownTray,
@@ -289,7 +291,7 @@ function EnrollmentModal({ student, onClose }: { student: UIStudent; onClose: ()
         setLoading(true);
         const [courses, enrolledRes] = await Promise.all([
           coursesService.getCourses(),
-          fetch(`/api/attendance/students/${student.id}/courses`, {
+          fetch(`${BASE_URL}/api/attendance/students/${student.id}/courses`, {
             headers: {
               "Content-Type": "application/json",
               Authorization: `Bearer ${localStorage.getItem("nbi-auth-token") || sessionStorage.getItem("nbi-auth-token") || ""}`,
@@ -317,7 +319,7 @@ function EnrollmentModal({ student, onClose }: { student: UIStudent; onClose: ()
     setSuccessMsg("");
     try {
       const token = localStorage.getItem("nbi-auth-token") || sessionStorage.getItem("nbi-auth-token") || "";
-      const res = await fetch("/api/attendance/enrollments", {
+      const res = await fetch(`${BASE_URL}/api/attendance/enrollments`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ student_id: student.id, course_id: parseInt(selectedCourse) }),

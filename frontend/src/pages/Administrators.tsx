@@ -1,4 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
+
+const BASE_URL = import.meta.env.VITE_API_URL ?? "";
 import {
   HiOutlineUserPlus,
   HiOutlineMagnifyingGlass,
@@ -369,7 +371,7 @@ export default function Administrators() {
     try {
       setLoading(true);
       setError("");
-      const res = await fetch("/api/attendance/administrators", {
+      const res = await fetch(`${BASE_URL}/api/attendance/administrators`, {
         headers: makeAuthHeaders(token),
       });
       if (!res.ok) throw new Error("Failed to load administrators");
@@ -395,7 +397,7 @@ export default function Administrators() {
   }, [admins, search, sortKey, sortDir]);
 
   async function handleAdd(data: { name: string; email: string }) {
-    const res = await fetch("/api/attendance/administrators", {
+    const res = await fetch(`${BASE_URL}/api/attendance/administrators`, {
       method: "POST",
       headers: makeAuthHeaders(token),
       body: JSON.stringify(data),
@@ -412,7 +414,7 @@ export default function Administrators() {
   async function handleToggleStatus(admin: Administrator) {
     setActionLoading(true);
     try {
-      const res = await fetch(`/api/attendance/administrators/${admin.id}/status`, {
+      const res = await fetch(`${BASE_URL}/api/attendance/administrators/${admin.id}/status`, {
         method: "PATCH",
         headers: makeAuthHeaders(token),
         body: JSON.stringify({ is_active: !admin.is_active }),
@@ -429,7 +431,7 @@ export default function Administrators() {
   }
 
   async function handleResetPassword(id: number, newPassword: string) {
-    const res = await fetch(`/api/attendance/administrators/${id}/reset-password`, {
+    const res = await fetch(`${BASE_URL}/api/attendance/administrators/${id}/reset-password`, {
       method: "POST",
       headers: makeAuthHeaders(token),
       body: JSON.stringify({ new_password: newPassword }),

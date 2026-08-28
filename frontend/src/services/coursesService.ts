@@ -3,7 +3,7 @@
  * All calls require a valid JWT.
  */
 
-const API_URL = "/api/attendance";
+const API_URL = `${import.meta.env.VITE_API_URL ?? ""}/api/attendance`;
 
 function authHeaders(): HeadersInit {
   const token =

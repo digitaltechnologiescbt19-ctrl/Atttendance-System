@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+
+const BASE_URL = import.meta.env.VITE_API_URL ?? "";
 import {
   HiOutlineUsers,
   HiOutlineUserMinus,
@@ -53,7 +55,7 @@ export default function Dashboard() {
         setLoading(true);
         setError("");
 
-        const res = await fetch("/api/attendance/dashboard-summary", {
+        const res = await fetch(`${BASE_URL}/api/attendance/dashboard-summary`, {
           headers: {
             "Content-Type": "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),

@@ -6,6 +6,8 @@ import {
   HiOutlineCheckCircle,
   HiOutlineExclamationTriangle,
 } from "react-icons/hi2";
+
+const BASE_URL = import.meta.env.VITE_API_URL ?? "";
 import { useAuth } from "../context/AuthContext";
 
 /* ------------------------------------------------------------------ */
@@ -86,7 +88,7 @@ export default function Settings() {
         }
 
         // Load attendance rules from backend system_settings table
-        const res = await fetch("/api/attendance/settings/attendance_rules", {
+        const res = await fetch(`${BASE_URL}/api/attendance/settings/attendance_rules`, {
           headers: getAuthHeaders(token),
         });
         if (res.ok) {
@@ -156,7 +158,7 @@ export default function Settings() {
         session_duration_minutes: sessionDuration,
       };
 
-      const res = await fetch("/api/attendance/settings/attendance_rules", {
+      const res = await fetch(`${BASE_URL}/api/attendance/settings/attendance_rules`, {
         method:  "PUT",
         headers: getAuthHeaders(token),
         body:    JSON.stringify({ value }),
@@ -201,7 +203,7 @@ export default function Settings() {
 
     setSaving(true);
     try {
-      const res = await fetch("/api/auth/change-password", {
+      const res = await fetch(`${BASE_URL}/api/auth/change-password`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

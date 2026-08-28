@@ -20,9 +20,11 @@ function getToken(): string | null {
   );
 }
 
-function authFetch(url: string): Promise<Response> {
+const BASE_URL = import.meta.env.VITE_API_URL ?? "";
+
+function authFetch(path: string): Promise<Response> {
   const t = getToken();
-  return fetch(url, {
+  return fetch(`${BASE_URL}${path}`, {
     headers: {
       "Content-Type": "application/json",
       ...(t ? { Authorization: `Bearer ${t}` } : {}),
@@ -248,8 +250,8 @@ export default function Attendance() {
       // Lecturers: use the scoped endpoint so only their own sessions are returned.
       // Admins/others: use the institution-wide endpoint.
       const url = lecturerId
-        ? `/api/attendance/lecturers/${lecturerId}/sessions`
-        : `/api/attendance/sessions`;
+        ? `${BASE_URL}/api/attendance/lecturers/${lecturerId}/sessions`
+        : `${BASE_URL}/api/attendance/sessions`;
 
       const res = await fetch(url, { headers: authHeaders() });
       if (!res.ok) {
