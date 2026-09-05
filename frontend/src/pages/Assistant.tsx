@@ -1,50 +1,124 @@
-// default React import not required with JSX runtime
-import { HiOutlineChatBubbleLeftEllipsis, HiOutlineSparkles, HiOutlineShieldCheck, HiOutlineUserGroup } from "react-icons/hi2";
+import { useState } from "react";
+import { HiOutlineSparkles, HiOutlineTrash } from "react-icons/hi2";
 import { useAuth } from "../context/AuthContext";
+import ChatArea, { type ChatMessageItem } from "../components/chat/ChatArea";
+import ChatInput from "../components/chat/ChatInput";
+import { sendMessage } from "../services/chatService";
 
 export default function Assistant() {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
+  const [messages, setMessages] = useState<ChatMessageItem[]>([]);
+  const [loading, setLoading] = useState(false);
+
   const roleTitle = user?.role === "admin" ? "Administrator" : user?.role === "lecturer" ? "Lecturer" : "Student";
 
+  async function handleSend(text: string) {
+    if (!text.trim() || loading) return;
+
+    const userMsg: ChatMessageItem = {
+      role: "user",
+      content: text,
+      timestamp: new Date().toISOString(),
+    };
+
+    setMessages((prev) => [...prev, userMsg]);
+    setLoading(true);
+
+    try {
+      const res = await sendMessage(text, token);
+      const assistantMsg: ChatMessageItem = {
+        role: "assistant",
+        content: res.reply || "I am here to assist with your academic timetable and attendance.",
+        timestamp: res.timestamp || new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, assistantMsg]);
+    } catch (err: unknown) {
+      const errMsg: ChatMessageItem = {
+        role: "assistant",
+        content: err instanceof Error ? err.message : "Unable to process message right now. Please try again.",
+        timestamp: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, errMsg]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleClear() {
+    setMessages([]);
+  }
+
   return (
-    <div>
-      <div className="page-header">
+    <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - var(--topbar-h) - var(--sp-8) * 2)" }}>
+      {/* Header */}
+      <div className="page-header" style={{ marginBottom: "1rem" }}>
         <div className="page-header-left">
           <span className="page-eyebrow">NBI Native AI</span>
           <h1 className="page-title">AI Assistant</h1>
-          <p className="page-desc">Role-aware academic intelligence for Students, Lecturers, and Administrators.</p>
+          <p className="page-desc">Role-aware academic intelligence powered by Google Gemini API.</p>
+        </div>
+
+        <div className="page-header-actions" style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+          <span style={{
+            background: "var(--accent-subtle)",
+            color: "var(--accent)",
+            border: "1px solid var(--accent-border)",
+            borderRadius: "var(--radius-full)",
+            padding: "4px 12px",
+            fontSize: "var(--tx-xs)",
+            fontWeight: 700,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "0.35rem",
+          }}>
+            <HiOutlineSparkles /> {roleTitle} Mode
+          </span>
+
+          {messages.length > 0 && (
+            <button
+              type="button"
+              onClick={handleClear}
+              className="btn-secondary"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.35rem",
+                padding: "6px 14px",
+                fontSize: "var(--tx-xs)",
+                borderRadius: "var(--radius-md)",
+                background: "var(--bg-surface)",
+                border: "1px solid var(--border-default)",
+                color: "var(--text-secondary)",
+                cursor: "pointer",
+              }}
+            >
+              <HiOutlineTrash /> Clear Chat
+            </button>
+          )}
         </div>
       </div>
 
-      <div className="card card-pad" style={{ marginBottom: "1.5rem", background: "var(--bg-surface-raised)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.75rem" }}>
-          <HiOutlineSparkles style={{ fontSize: "1.5rem", color: "var(--accent)" }} />
-          <h2 style={{ fontSize: "var(--tx-md)", fontWeight: 700, color: "var(--text-primary)" }}>
-            Native NBI Assistant Workspace ({roleTitle} Mode)
-          </h2>
-        </div>
-        <p style={{ fontSize: "var(--tx-sm)", color: "var(--text-secondary)", lineHeight: 1.6 }}>
-          Authenticated as <strong>{user?.name}</strong> ({user?.email}). The native AI assistant connects directly to authorized system tools for timetables, attendance analytics, and course records based on your role.
-        </p>
-      </div>
-
-      <div className="placeholder-page">
-        <div className="empty-icon"><HiOutlineChatBubbleLeftEllipsis /></div>
-        <span className="placeholder-badge">Native AI Pipeline</span>
-        <h2 style={{ fontSize: "var(--tx-xl)", fontWeight: 700, color: "var(--text-primary)" }}>
-          Smart Attendance AI Assistant
-        </h2>
-        <p style={{ fontSize: "var(--tx-sm)", color: "var(--text-muted)", maxWidth: 480, lineHeight: 1.7 }}>
-          The native assistant pipeline connects directly to authenticated backend tools without exposing private database records. Ready for live queries on your {roleTitle.toLowerCase()} dashboard.
-        </p>
-        <div style={{ display: "flex", gap: "1rem", marginTop: "1rem", fontSize: "var(--tx-xs)", color: "var(--text-muted)" }}>
-          <span style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
-            <HiOutlineShieldCheck style={{ color: "var(--success)" }} /> Permission Enforced
-          </span>
-          <span style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
-            <HiOutlineUserGroup style={{ color: "var(--accent)" }} /> Role-Aware Context
-          </span>
-        </div>
+      {/* Main Chat Area Card */}
+      <div className="card" style={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        borderRadius: "var(--radius-lg)",
+        boxShadow: "var(--shadow-md)",
+      }}>
+        <ChatArea
+          messages={messages}
+          loading={loading}
+          onSelectPrompt={handleSend}
+          roleName={roleTitle}
+          userName={user?.name || "User"}
+        />
+        <ChatInput
+          onSend={handleSend}
+          disabled={loading}
+          placeholder={`Ask about your ${user?.role === "student" ? "classes, attendance rate, check-in history" : user?.role === "lecturer" ? "lectures, course check-ins, student attendance" : "institute attendance trends, courses, student metrics"}...`}
+        />
       </div>
     </div>
   );
