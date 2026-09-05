@@ -136,6 +136,8 @@ function AccountActivationModal({
   const [activationToken,  setActivationToken] = useState("");
   const [newPw,            setNewPw]           = useState("");
   const [confirmPw,        setConfirmPw]       = useState("");
+  const [showNewPw,        setShowNewPw]       = useState(false);
+  const [showConfirmPw,    setShowConfirmPw]   = useState(false);
   const [loading,          setLoading]         = useState(false);
   const [error,            setError]           = useState("");
   const [emailNotFound,    setEmailNotFound]   = useState(false);
@@ -423,32 +425,54 @@ function AccountActivationModal({
             <div className="modal-body">
               <div className="form-group">
                 <label htmlFor="act-new-pw">New Password</label>
-                <input
-                  type="password"
-                  id="act-new-pw"
-                  value={newPw}
-                  onChange={e => setNewPw(e.target.value)}
-                  placeholder="At least 6 characters"
-                  disabled={loading}
-                  autoFocus
-                  required
-                />
+                <div className="password-input-wrapper">
+                  <input
+                    type={showNewPw ? "text" : "password"}
+                    id="act-new-pw"
+                    value={newPw}
+                    onChange={e => setNewPw(e.target.value)}
+                    placeholder="At least 6 characters"
+                    disabled={loading}
+                    autoFocus
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPw(p => !p)}
+                    className="password-toggle"
+                    disabled={loading}
+                    aria-label={showNewPw ? "Hide password" : "Show password"}
+                  >
+                    {showNewPw ? <HiOutlineEyeSlash /> : <HiOutlineEye />}
+                  </button>
+                </div>
                 <div style={{ fontSize: "0.8em", color: "var(--text-muted)", marginTop: "0.3rem" }}>
                   Minimum 6 characters
                 </div>
               </div>
               <div className="form-group" style={{ marginTop: "0.75rem" }}>
                 <label htmlFor="act-confirm-pw">Confirm Password</label>
-                <input
-                  type="password"
-                  id="act-confirm-pw"
-                  value={confirmPw}
-                  onChange={e => setConfirmPw(e.target.value)}
-                  placeholder="Re-enter your password"
-                  disabled={loading}
-                  onKeyDown={e => e.key === "Enter" && activateAccount()}
-                  required
-                />
+                <div className="password-input-wrapper">
+                  <input
+                    type={showConfirmPw ? "text" : "password"}
+                    id="act-confirm-pw"
+                    value={confirmPw}
+                    onChange={e => setConfirmPw(e.target.value)}
+                    placeholder="Re-enter your password"
+                    disabled={loading}
+                    onKeyDown={e => e.key === "Enter" && activateAccount()}
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPw(p => !p)}
+                    className="password-toggle"
+                    disabled={loading}
+                    aria-label={showConfirmPw ? "Hide password" : "Show password"}
+                  >
+                    {showConfirmPw ? <HiOutlineEyeSlash /> : <HiOutlineEye />}
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -499,6 +523,8 @@ function PasswordRecoveryModal({
   const [resetToken,     setResetToken]     = useState("");
   const [newPw,          setNewPw]          = useState("");
   const [confirmPw,      setConfirmPw]      = useState("");
+  const [showNewPw,      setShowNewPw]      = useState(false);
+  const [showConfirmPw,  setShowConfirmPw]  = useState(false);
   const [loading,        setLoading]        = useState(false);
   const [error,          setError]          = useState("");
   const [accountMissing, setAccountMissing] = useState(false);
@@ -801,32 +827,54 @@ function PasswordRecoveryModal({
             <div className="modal-body">
               <div className="form-group">
                 <label htmlFor="pr-new-pw">New Password</label>
-                <input
-                  type="password"
-                  id="pr-new-pw"
-                  value={newPw}
-                  onChange={e => setNewPw(e.target.value)}
-                  placeholder="At least 6 characters"
-                  disabled={loading}
-                  autoFocus
-                  required
-                />
+                <div className="password-input-wrapper">
+                  <input
+                    type={showNewPw ? "text" : "password"}
+                    id="pr-new-pw"
+                    value={newPw}
+                    onChange={e => setNewPw(e.target.value)}
+                    placeholder="At least 6 characters"
+                    disabled={loading}
+                    autoFocus
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPw(p => !p)}
+                    className="password-toggle"
+                    disabled={loading}
+                    aria-label={showNewPw ? "Hide password" : "Show password"}
+                  >
+                    {showNewPw ? <HiOutlineEyeSlash /> : <HiOutlineEye />}
+                  </button>
+                </div>
                 <div style={{ fontSize: "0.8em", color: "var(--text-muted)", marginTop: "0.3rem" }}>
                   Minimum 6 characters
                 </div>
               </div>
               <div className="form-group" style={{ marginTop: "0.75rem" }}>
                 <label htmlFor="pr-confirm-pw">Confirm New Password</label>
-                <input
-                  type="password"
-                  id="pr-confirm-pw"
-                  value={confirmPw}
-                  onChange={e => setConfirmPw(e.target.value)}
-                  placeholder="Re-enter new password"
-                  disabled={loading}
-                  onKeyDown={e => e.key === "Enter" && resetPassword()}
-                  required
-                />
+                <div className="password-input-wrapper">
+                  <input
+                    type={showConfirmPw ? "text" : "password"}
+                    id="pr-confirm-pw"
+                    value={confirmPw}
+                    onChange={e => setConfirmPw(e.target.value)}
+                    placeholder="Re-enter new password"
+                    disabled={loading}
+                    onKeyDown={e => e.key === "Enter" && resetPassword()}
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPw(p => !p)}
+                    className="password-toggle"
+                    disabled={loading}
+                    aria-label={showConfirmPw ? "Hide password" : "Show password"}
+                  >
+                    {showConfirmPw ? <HiOutlineEyeSlash /> : <HiOutlineEye />}
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -1129,15 +1177,18 @@ export default function Login() {
           <form onSubmit={handleSubmit} className="login-form">
             <div className="form-group">
               <label htmlFor="login-email">Email Address</label>
-              <input
-                type="email"
-                id="login-email"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                placeholder="your.email@example.com"
-                required
-                disabled={loading}
-              />
+              <div className="input-with-icon">
+                <HiOutlineEnvelope />
+                <input
+                  type="email"
+                  id="login-email"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  placeholder="your.email@example.com"
+                  required
+                  disabled={loading}
+                />
+              </div>
             </div>
 
             <div className="form-group">

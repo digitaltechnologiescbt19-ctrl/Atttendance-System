@@ -1588,6 +1588,30 @@ body,
   color: #6b7280;
 }
 
+/* Input with icon (e.g. Email field icon) */
+.input-with-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.input-with-icon svg {
+  position: absolute;
+  left: var(--sp-3);
+  width: 18px;
+  height: 18px;
+  color: var(--text-secondary);
+  pointer-events: none;
+  z-index: 2;
+  flex-shrink: 0;
+}
+
+.input-with-icon input {
+  width: 100%;
+  padding-left: 40px !important;
+}
+
 /* Password Input Wrapper */
 .password-input-wrapper {
   position: relative;

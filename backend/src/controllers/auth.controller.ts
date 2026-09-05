@@ -451,8 +451,8 @@ export async function activateAccount(req: Request, res: Response): Promise<void
             return;
         }
 
-        // Hash the user's chosen password
-        const passwordHash = await bcrypt.hash(new_password, 12);
+        // Hash the user's chosen password (cost factor 10 for fast, secure performance)
+        const passwordHash = await bcrypt.hash(new_password, 10);
 
         // Activate the account
         await pool.query(
@@ -468,12 +468,10 @@ export async function activateAccount(req: Request, res: Response): Promise<void
             [passwordHash, user.id]
         );
 
-        // Send role-specific welcome email (non-blocking)
-        try {
-            await sendWelcomeEmail(user.email, user.name, user.role);
-        } catch (emailErr) {
+        // Send role-specific welcome email (non-blocking fire-and-forget)
+        sendWelcomeEmail(user.email, user.name, user.role).catch(emailErr => {
             console.error("Welcome email failed (account still activated):", emailErr);
-        }
+        });
 
         // Issue JWT — user is immediately signed in
         const token = signToken(user.id, user.role);
@@ -943,7 +941,7 @@ export async function resetPassword(req: Request, res: Response): Promise<void> 
         }
 
         // All checks passed — hash new password, clear reset artefacts
-        const newHash = await bcrypt.hash(new_password, 12);
+        const newHash = await bcrypt.hash(new_password, 10);
 
         await pool.query(
             `UPDATE users
@@ -1024,7 +1022,7 @@ export async function changePassword(req: Request, res: Response): Promise<void>
         }
 
         // Hash new password and save
-        const newHash = await bcrypt.hash(new_password, 12);
+        const newHash = await bcrypt.hash(new_password, 10);
         await pool.query(
             "UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2",
             [newHash, userId]

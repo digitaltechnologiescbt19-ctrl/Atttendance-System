@@ -1765,7 +1765,7 @@ export const resetAdministratorPassword = async (req: Request, res: Response) =>
         }
 
         // Hash new password — use top-level bcryptLib import (not dynamic require)
-        const password_hash = await bcryptLib.hash(new_password, 12);
+        const password_hash = await bcryptLib.hash(new_password, 10);
 
         const result = await pool.query(
             `UPDATE users

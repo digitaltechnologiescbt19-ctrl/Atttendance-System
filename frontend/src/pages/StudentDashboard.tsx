@@ -56,8 +56,19 @@ export default function StudentDashboard() {
   useEffect(() => {
     if (!user?.linked_id) { setLoading(false); return; }
 
+    const token =
+      localStorage.getItem("nbi-auth-token") ||
+      sessionStorage.getItem("nbi-auth-token") || "";
+
+    const authHeaders: HeadersInit = {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+
     // Fetch attendance summary
-    fetch(`${API_URL}/api/attendance/students/${user.linked_id}/attendance`)
+    fetch(`${API_URL}/api/attendance/students/${user.linked_id}/attendance`, {
+      headers: authHeaders,
+    })
       .then((r) => (r.ok ? r.json() : null))
       .then((data: unknown) => {
         if (!data || !Array.isArray(data)) return;
@@ -75,7 +86,9 @@ export default function StudentDashboard() {
       .finally(() => setLoading(false));
 
     // Fetch today's sessions
-    fetch(`${API_URL}/api/attendance/students/${user.linked_id}/sessions/today`)
+    fetch(`${API_URL}/api/attendance/students/${user.linked_id}/sessions/today`, {
+      headers: authHeaders,
+    })
       .then((r) => (r.ok ? r.json() : null))
       .then((data: unknown) => {
         if (!data || !Array.isArray(data)) return;
@@ -84,7 +97,9 @@ export default function StudentDashboard() {
       .catch(() => { /* fail silently */ });
 
     // Fetch upcoming sessions
-    fetch(`${API_URL}/api/attendance/students/${user.linked_id}/sessions/upcoming`)
+    fetch(`${API_URL}/api/attendance/students/${user.linked_id}/sessions/upcoming`, {
+      headers: authHeaders,
+    })
       .then((r) => (r.ok ? r.json() : null))
       .then((data: unknown) => {
         if (!data || !Array.isArray(data)) return;
