@@ -55,7 +55,7 @@ export default function Assistant() {
         <div className="page-header-left">
           <span className="page-eyebrow">NBI Native AI</span>
           <h1 className="page-title">AI Assistant</h1>
-          <p className="page-desc">Role-aware academic intelligence powered by Google Gemini API.</p>
+          <p className="page-desc">Role-aware academic & attendance intelligence for students, lecturers, and administrators.</p>
         </div>
 
         <div className="page-header-actions" style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>

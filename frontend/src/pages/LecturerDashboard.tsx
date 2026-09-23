@@ -15,7 +15,7 @@ import WelcomeBanner from "../components/dashboard/WelcomeBanner";
 import StatCard     from "../components/dashboard/StatCard";
 import TodaySchedule from "../components/dashboard/TodaySchedule";
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:5000";
+const API_URL = import.meta.env.VITE_API_URL ?? "";
 
 /* ------------------------------------------------------------------ */
 /*  Types — mirrors what GET /lecturers/:id/dashboard returns          */
