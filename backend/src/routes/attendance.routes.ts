@@ -101,8 +101,8 @@ router.delete("/students/:id", authenticate, requireRole("admin"), deleteStudent
  * =========================
  */
 
-// Create lecturer
-router.post("/lecturers",    authenticate, createLecturer);
+// Create lecturer (admin only)
+router.post("/lecturers",    authenticate, requireRole("admin"), createLecturer);
 
 // Get all lecturers
 router.get("/lecturers",     authenticate, getLecturers);
@@ -110,11 +110,11 @@ router.get("/lecturers",     authenticate, getLecturers);
 // Get one lecturer
 router.get("/lecturers/:id", authenticate, getLecturer);
 
-// Update lecturer
-router.put("/lecturers/:id", authenticate, updateLecturer);
+// Update lecturer (admin only)
+router.put("/lecturers/:id", authenticate, requireRole("admin"), updateLecturer);
 
-// Delete lecturer
-router.delete("/lecturers/:id", authenticate, deleteLecturer);
+// Delete lecturer (admin only)
+router.delete("/lecturers/:id", authenticate, requireRole("admin"), deleteLecturer);
 
 
 /*
@@ -147,8 +147,8 @@ router.get("/lecturers/:lecturerId/courses/:courseId/students/:studentId", authe
  * =========================
  */
 
-// Create course
-router.post("/courses",    authenticate, createCourse);
+// Create course (admin only)
+router.post("/courses",    authenticate, requireRole("admin"), createCourse);
 
 // Get all courses
 router.get("/courses",     authenticate, getCourses);
@@ -156,11 +156,11 @@ router.get("/courses",     authenticate, getCourses);
 // Get one course
 router.get("/courses/:id", authenticate, getCourse);
 
-// Update course
-router.put("/courses/:id", authenticate, updateCourse);
+// Update course (admin only)
+router.put("/courses/:id", authenticate, requireRole("admin"), updateCourse);
 
-// Delete course
-router.delete("/courses/:id", authenticate, deleteCourse);
+// Delete course (admin only)
+router.delete("/courses/:id", authenticate, requireRole("admin"), deleteCourse);
 
 
 /*
