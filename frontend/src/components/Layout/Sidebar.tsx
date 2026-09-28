@@ -58,6 +58,7 @@ const ADMIN_BOTTOM_NAV: NavItem[] = [
 
 const LECTURER_MAIN_NAV: NavItem[] = [
   { label: "Dashboard",     to: "/lecturer/dashboard",     icon: <HiOutlineSquares2X2 /> },
+  { label: "My Courses",    to: "/lecturer/courses",       icon: <HiOutlineBookOpen /> },
   { label: "QR Attendance", to: "/lecturer/qr-attendance", icon: <HiOutlineQrCode /> },
   { label: "Attendance",    to: "/lecturer/attendance",    icon: <HiOutlineClipboardDocumentList /> },
   { label: "Reports",       to: "/lecturer/reports",       icon: <HiOutlineChartBarSquare /> },
@@ -70,6 +71,7 @@ const LECTURER_BOTTOM_NAV: NavItem[] = [
 
 const STUDENT_MAIN_NAV: NavItem[] = [
   { label: "Dashboard",     to: "/student/dashboard",  icon: <HiOutlineSquares2X2 /> },
+  { label: "My Courses",    to: "/student/courses",    icon: <HiOutlineBookOpen /> },
   { label: "Scan QR",       to: "/student/scan",       icon: <HiOutlineQrCode /> },
   { label: "My Attendance", to: "/student/attendance", icon: <HiOutlineClipboardDocumentList /> },
   { label: "Reports",       to: "/student/reports",    icon: <HiOutlineChartBarSquare /> },

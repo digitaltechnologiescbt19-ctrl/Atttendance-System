@@ -699,6 +699,102 @@ async function toolDiagnoseSystemIssue(ctx: UserContext) {
   };
 }
 
+async function toolSearchStudents(ctx: UserContext, args: Record<string, any>) {
+  if (ctx.role !== "lecturer" && ctx.role !== "admin") {
+    return { error: "Access Denied: Only Lecturers and Admins can search students." };
+  }
+  const query = String(args.query || args.q || "").trim();
+  if (!query) return { students: [] };
+
+  const res = await pool.query(
+    `SELECT id, student_number, full_name, email, programme 
+     FROM students 
+     WHERE full_name ILIKE $1 OR email ILIKE $1 OR student_number ILIKE $1 
+     ORDER BY full_name ASC LIMIT 10`,
+    [`%${query}%`]
+  );
+  return { students: res.rows };
+}
+
+async function toolAddStudentToCourse(ctx: UserContext, args: Record<string, any>) {
+  if (ctx.role !== "lecturer" && ctx.role !== "admin") {
+    return { error: "Access Denied: Only Lecturers and Admins can enroll students into courses." };
+  }
+  const studentId = Number(args.student_id);
+  const courseId = Number(args.course_id);
+
+  if (!studentId || !courseId) {
+    return { error: "student_id and course_id are required." };
+  }
+
+  if (ctx.role === "lecturer") {
+    const courseCheck = await pool.query(
+      "SELECT id, course_code, course_name FROM courses WHERE id = $1 AND lecturer_id = $2",
+      [courseId, ctx.linkedId]
+    );
+    if (courseCheck.rows.length === 0) {
+      return { error: "Access Denied: You are not authorized to manage enrollments for this course." };
+    }
+  }
+
+  const studentCheck = await pool.query("SELECT id, full_name FROM students WHERE id = $1", [studentId]);
+  if (studentCheck.rows.length === 0) {
+    return { error: "Student not found." };
+  }
+  const studentName = studentCheck.rows[0].full_name;
+
+  const courseRes = await pool.query("SELECT id, course_code, course_name FROM courses WHERE id = $1", [courseId]);
+  const courseCode = courseRes.rows[0]?.course_code || `#${courseId}`;
+
+  try {
+    await pool.query(
+      "INSERT INTO student_courses (student_id, course_id) VALUES ($1, $2)",
+      [studentId, courseId]
+    );
+    return {
+      success: true,
+      message: `${studentName} has been successfully enrolled into ${courseCode}.`,
+      studentName,
+      courseCode,
+    };
+  } catch (err: any) {
+    if (err.code === "23505") {
+      return {
+        success: true,
+        message: `${studentName} is already enrolled in ${courseCode}.`,
+        studentName,
+        courseCode,
+      };
+    }
+    return { error: "Failed to enroll student: " + (err.message || "Database error") };
+  }
+}
+
+async function toolRemoveStudentFromCourse(ctx: UserContext, args: Record<string, any>) {
+  if (ctx.role !== "lecturer" && ctx.role !== "admin") {
+    return { error: "Access Denied: Only Lecturers and Admins can remove students from courses." };
+  }
+  const studentId = Number(args.student_id);
+  const courseId = Number(args.course_id);
+
+  if (!studentId || !courseId) {
+    return { error: "student_id and course_id are required." };
+  }
+
+  if (ctx.role === "lecturer") {
+    const courseCheck = await pool.query(
+      "SELECT id FROM courses WHERE id = $1 AND lecturer_id = $2",
+      [courseId, ctx.linkedId]
+    );
+    if (courseCheck.rows.length === 0) {
+      return { error: "Access Denied: You do not manage this course." };
+    }
+  }
+
+  await pool.query("DELETE FROM student_courses WHERE student_id = $1 AND course_id = $2", [studentId, courseId]);
+  return { success: true, message: `Student #${studentId} removed from course #${courseId} roster.` };
+}
+
 export interface ToolMeta {
   name: string;
   description: string;
@@ -763,6 +859,33 @@ export const AVAILABLE_TOOLS: Record<string, ToolMeta> = {
     sideEffect: false,
     confirmationRequired: false,
     execute: async (ctx, args) => toolGetCourseStudents(ctx, Number(args.course_id || 0)),
+  },
+  search_students: {
+    name: "search_students",
+    description: "Search registered student directory by name or email",
+    allowedRoles: ["lecturer", "admin"],
+    readOnly: true,
+    sideEffect: false,
+    confirmationRequired: false,
+    execute: async (ctx, args) => toolSearchStudents(ctx, args),
+  },
+  add_student_to_course: {
+    name: "add_student_to_course",
+    description: "Enroll a student into a course class roster",
+    allowedRoles: ["lecturer", "admin"],
+    readOnly: false,
+    sideEffect: true,
+    confirmationRequired: true,
+    execute: async (ctx, args) => toolAddStudentToCourse(ctx, args),
+  },
+  remove_student_from_course: {
+    name: "remove_student_from_course",
+    description: "Remove a student from a course class roster",
+    allowedRoles: ["lecturer", "admin"],
+    readOnly: false,
+    sideEffect: true,
+    confirmationRequired: true,
+    execute: async (ctx, args) => toolRemoveStudentFromCourse(ctx, args),
   },
   get_institution_attendance_summary: {
     name: "get_institution_attendance_summary",
@@ -882,18 +1005,26 @@ export async function handleChatMessage(req: AuthRequest, res: Response): Promis
     await ensureChatTableExists();
     const ctx = await getAuthenticatedUser(userId);
 
-    const { message, confirm_action } = req.body as {
+    const { message, confirm_action, action } = req.body as {
       message?: string;
       confirm_action?: { tool: string; args: Record<string, any> };
+      action?: { tool: string; args: Record<string, any> };
     };
 
+    const targetAction = confirm_action || action;
+
     // 1. CONFIRMATION EXECUTION WORKFLOW
-    if (confirm_action) {
-      const toolResult: any = await executeTool(confirm_action.tool, confirm_action.args, ctx);
+    if (targetAction) {
+      const toolResult: any = await executeTool(targetAction.tool, targetAction.args, ctx);
 
       let replyText = "";
       if (toolResult.error) {
         replyText = `⚠️ **Action Execution Failed**: ${toolResult.error}`;
+      } else if (toolResult.studentName && toolResult.courseCode) {
+        replyText = `✓ **Student Enrolled Successfully!**\n` +
+          `- **Student**: ${toolResult.studentName}\n` +
+          `- **Course**: ${toolResult.courseCode}\n` +
+          `- **Status**: Active Class Roster Member`;
       } else if (toolResult.session) {
         replyText = `✓ **Attendance Session Action Executed Successfully!**\n` +
           `- **Session ID**: #${toolResult.session.id}\n` +
@@ -953,12 +1084,83 @@ export async function handleChatMessage(req: AuthRequest, res: Response): Promis
     let pendingAction: { tool: string; args: Record<string, any>; description: string } | null = null;
     let pendingReply = "";
 
+    const isAddStudentIntent = (q.includes("add") || q.includes("enroll") || q.includes("put") || q.includes("make") || q.includes("register")) && 
+      (q.includes("student") || q.includes("class") || q.includes("course") || q.includes("roster") || q.includes("my") || /\b(csc|cs)\d+/i.test(q));
+
     const isDiagnoseIntent = /\b(diagnose|expired|issue|problem|broken|fix)\b/i.test(userPrompt) || q.includes("accepting scans") || q.includes("can't scan") || q.includes("cant scan") || q.includes("session isn't") || q.includes("why is session") || q.includes("why isn't");
     const isSessionCreateIntent = /\b(create|start|open|new)\b/i.test(userPrompt) && /\bsessions?\b/i.test(userPrompt);
     const isSessionCloseIntent = /\b(close|end|stop|terminate)\b/i.test(userPrompt) && /\bsessions?\b/i.test(userPrompt);
     const isCourseCreateIntent = /\b(create|add|new)\b/i.test(userPrompt) && /\bcourses?\b/i.test(userPrompt);
 
-    if (isDiagnoseIntent && (ctx.role === "lecturer" || ctx.role === "admin")) {
+    if (isAddStudentIntent && (ctx.role === "lecturer" || ctx.role === "admin")) {
+      const cleanPrompt = userPrompt
+        .replace(/\b(add|enroll|put|as|one|of|my|students?|to|the|class|course|roster|in|into|make|register)\b/gi, " ")
+        .replace(/\b(csc|cs)\d+\b/gi, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      let studentsRes = await pool.query(
+        `SELECT id, full_name, student_number, email FROM students WHERE full_name ILIKE $1 OR email ILIKE $1 LIMIT 5`,
+        [`%${cleanPrompt}%`]
+      );
+
+      if (studentsRes.rows.length === 0 && cleanPrompt.includes(" ")) {
+        const parts = cleanPrompt.split(" ").filter(p => p.length > 2);
+        if (parts.length > 0) {
+          studentsRes = await pool.query(
+            `SELECT id, full_name, student_number, email FROM students WHERE full_name ILIKE $1 OR full_name ILIKE $2 LIMIT 5`,
+            [`%${parts[0]}%`, `%${parts[parts.length - 1]}%`]
+          );
+        }
+      }
+
+      if (studentsRes.rows.length === 0) {
+        pendingReply = `I searched for **"${cleanPrompt || userPrompt}"** in the NBI student directory, but could not find a matching student record. Please verify the student's full name or email.`;
+      } else {
+        const targetStudent = studentsRes.rows[0];
+
+        let targetCourse: any = null;
+        let lecturerCoursesRes;
+        if (ctx.role === "lecturer" && ctx.linkedId) {
+          lecturerCoursesRes = await pool.query(
+            "SELECT id, course_code, course_name FROM courses WHERE lecturer_id = $1 ORDER BY course_code ASC",
+            [ctx.linkedId]
+          );
+        } else {
+          lecturerCoursesRes = await pool.query("SELECT id, course_code, course_name FROM courses ORDER BY course_code ASC LIMIT 10");
+        }
+
+        const lecturerCourses = lecturerCoursesRes.rows;
+
+        for (const c of lecturerCourses) {
+          if (q.includes(c.course_code.toLowerCase())) {
+            targetCourse = c;
+            break;
+          }
+        }
+
+        if (!targetCourse) {
+          if (lecturerCourses.length === 1) {
+            targetCourse = lecturerCourses[0];
+          } else if (lecturerCourses.length > 1) {
+            pendingReply = `I found student **${targetStudent.full_name}** (${targetStudent.student_number || targetStudent.email}).\n\n` +
+              `Which course would you like to enroll **${targetStudent.full_name}** into?\n` +
+              lecturerCourses.map((c: any) => `- **${c.course_code}**: ${c.course_name}`).join("\n");
+          } else {
+            pendingReply = `⚠️ No assigned courses were found for your instructor account. Please contact an Administrator.`;
+          }
+        }
+
+        if (targetCourse && !pendingReply) {
+          pendingAction = {
+            tool: "add_student_to_course",
+            args: { student_id: targetStudent.id, course_id: targetCourse.id },
+            description: `Enroll ${targetStudent.full_name} into ${targetCourse.course_code}: ${targetCourse.course_name}`,
+          };
+          pendingReply = `I am ready to enroll **${targetStudent.full_name}** (${targetStudent.student_number || targetStudent.email}) into **${targetCourse.course_code}: ${targetCourse.course_name}**.\n\nPlease confirm to proceed.`;
+        }
+      }
+    } else if (isDiagnoseIntent && (ctx.role === "lecturer" || ctx.role === "admin")) {
       const diag: any = await toolDiagnoseSessionIssue(ctx, {});
       if (diag.issueFound && diag.proposedTool) {
         pendingAction = {
@@ -1020,7 +1222,7 @@ export async function handleChatMessage(req: AuthRequest, res: Response): Promis
       }
     }
 
-    if (pendingReply && (pendingAction || pendingReply.includes("Access Denied") || pendingReply.includes("Diagnostic Report"))) {
+    if (pendingReply) {
       await pool.query(
         "INSERT INTO chat_messages (user_id, role, content, action_required, created_at) VALUES ($1, 'assistant', $2, $3, NOW())",
         [ctx.userId, pendingReply, pendingAction ? JSON.stringify(pendingAction) : null]

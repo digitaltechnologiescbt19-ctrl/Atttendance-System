@@ -89,7 +89,8 @@ export async function getLecturerCourses(req: Request, res: Response): Promise<v
             return;
         }
 
-        const requestedId = parseInt(String(req.params.lecturerId), 10);
+        const requestedParam = String(req.params.lecturerId);
+        const requestedId = requestedParam === "me" ? authLecturerId : parseInt(requestedParam, 10);
         if (isNaN(requestedId) || requestedId !== authLecturerId) {
             res.status(403).json({ message: "Access denied. You can only access your own courses." });
             return;
@@ -124,6 +125,85 @@ export async function getLecturerCourses(req: Request, res: Response): Promise<v
     } catch (error) {
         console.error("getLecturerCourses error:", error);
         res.status(500).json({ message: "Failed to retrieve courses." });
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/*  GET /api/attendance/lecturers/:lecturerId/courses/:courseId       */
+/* ------------------------------------------------------------------ */
+
+export async function getLecturerCourseDetail(req: Request, res: Response): Promise<void> {
+    try {
+        const authLecturerId = await resolveAuthLecturerId(req);
+        if (!authLecturerId) {
+            res.status(403).json({ message: "Access denied. Not a valid lecturer account." });
+            return;
+        }
+
+        const requestedParam = String(req.params.lecturerId);
+        const requestedLecId = requestedParam === "me" ? authLecturerId : parseInt(requestedParam, 10);
+        const courseId = parseInt(String(req.params.courseId), 10);
+
+        if (isNaN(requestedLecId) || requestedLecId !== authLecturerId) {
+            res.status(403).json({ message: "Access denied. You can only view details of your own courses." });
+            return;
+        }
+
+        const courseRes = await pool.query(
+            `SELECT c.*, l.full_name as lecturer_name, l.email as lecturer_email
+             FROM courses c
+             LEFT JOIN lecturers l ON c.lecturer_id = l.id
+             WHERE c.id = $1 AND c.lecturer_id = $2`,
+            [courseId, authLecturerId]
+        );
+
+        if (courseRes.rows.length === 0) {
+            res.status(404).json({ message: "Course not found or access restricted." });
+            return;
+        }
+
+        const rosterRes = await pool.query(
+            `SELECT 
+                st.id,
+                st.student_number,
+                st.full_name,
+                st.email,
+                st.programme,
+                COUNT(a.id) FILTER (WHERE a.status = 'present') as present_count,
+                COUNT(a.id) FILTER (WHERE a.status = 'late') as late_count,
+                COUNT(a.id) FILTER (WHERE a.status = 'absent') as absent_count,
+                COUNT(a.id) as total_attendance,
+                COALESCE(ROUND((COUNT(a.id) FILTER (WHERE a.status = 'present' OR a.status = 'late')::float / NULLIF(COUNT(a.id), 0)) * 100), 0) as attendance_rate
+             FROM student_courses sc
+             JOIN students st ON sc.student_id = st.id
+             LEFT JOIN sessions s ON s.course_id = sc.course_id
+             LEFT JOIN attendance a ON a.session_id = s.id AND a.student_id = st.id
+             WHERE sc.course_id = $1
+             GROUP BY st.id, st.student_number, st.full_name, st.email, st.programme
+             ORDER BY st.full_name ASC`,
+            [courseId]
+        );
+
+        const sessionsRes = await pool.query(
+            `SELECT s.id, s.session_date, s.start_time, s.end_time, s.is_active, s.present_window_minutes,
+                    COUNT(a.id) as total_checkins
+             FROM sessions s
+             LEFT JOIN attendance a ON a.session_id = s.id
+             WHERE s.course_id = $1
+             GROUP BY s.id
+             ORDER BY s.session_date DESC, s.id DESC LIMIT 10`,
+            [courseId]
+        );
+
+        res.json({
+            course: courseRes.rows[0],
+            students: rosterRes.rows,
+            sessions: sessionsRes.rows,
+        });
+
+    } catch (error) {
+        console.error("getLecturerCourseDetail error:", error);
+        res.status(500).json({ message: "Failed to load course details." });
     }
 }
 

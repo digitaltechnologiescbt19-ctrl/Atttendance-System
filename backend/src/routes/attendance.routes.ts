@@ -37,6 +37,7 @@ import {
 
 import {
     getLecturerCourses,
+    getLecturerCourseDetail,
     getLecturerSessions,
     getLecturerDashboard,
     getLecturerInsights,
@@ -128,6 +129,7 @@ router.delete("/lecturers/:id", authenticate, requireRole("admin"), deleteLectur
 
 // Get courses assigned to the authenticated lecturer
 router.get("/lecturers/:lecturerId/courses",   authenticate, requireRole("lecturer"), getLecturerCourses);
+router.get("/lecturers/:lecturerId/courses/:courseId", authenticate, requireRole("lecturer"), getLecturerCourseDetail);
 
 // Get sessions for the authenticated lecturer's courses
 router.get("/lecturers/:lecturerId/sessions",  authenticate, requireRole("lecturer"), getLecturerSessions);
@@ -193,7 +195,7 @@ router.get("/students/me/report", authenticate, getStudentReport);
  */
 
 // Enroll a student in a course
-// Admins may enroll any student. Students may self-enroll (server derives their own id).
+// Admins may enroll any student. Lecturers may enroll students into courses they teach. Students may self-enroll.
 router.post("/enrollments", authenticate, async (req, res) => {
     try {
         const authReq = req as AuthRequest;
@@ -216,8 +218,23 @@ router.post("/enrollments", authenticate, async (req, res) => {
                 return res.status(403).json({ message: "Access denied" });
             }
             student_id = String(userRow.rows[0].linked_id);
+        } else if (role === "lecturer") {
+            const userRow = await pool.query(
+                "SELECT linked_id FROM users WHERE id = $1 AND is_active = TRUE",
+                [authReq.userId]
+            );
+            if (userRow.rows.length === 0 || !userRow.rows[0].linked_id) {
+                return res.status(403).json({ message: "Access denied" });
+            }
+            const lecturerId = userRow.rows[0].linked_id;
+            const courseCheck = await pool.query(
+                "SELECT id FROM courses WHERE id = $1 AND lecturer_id = $2",
+                [course_id, lecturerId]
+            );
+            if (courseCheck.rows.length === 0) {
+                return res.status(403).json({ message: "Access denied. You can only enroll students into courses you teach." });
+            }
         } else if (role !== "admin") {
-            // Only admin or student may enroll
             return res.status(403).json({ message: "Access denied" });
         }
 
@@ -257,46 +274,130 @@ router.post("/enrollments", authenticate, async (req, res) => {
     }
 });
 
+// Remove student from course enrollment
+router.delete("/enrollments/:courseId/:studentId", authenticate, async (req, res) => {
+    try {
+        const authReq = req as AuthRequest;
+        const role = authReq.userRole;
+        const { courseId, studentId } = req.params;
+
+        if (role === "lecturer") {
+            const userRow = await pool.query(
+                "SELECT linked_id FROM users WHERE id = $1 AND is_active = TRUE",
+                [authReq.userId]
+            );
+            if (userRow.rows.length === 0 || !userRow.rows[0].linked_id) {
+                return res.status(403).json({ message: "Access denied" });
+            }
+            const lecturerId = userRow.rows[0].linked_id;
+            const courseCheck = await pool.query(
+                "SELECT id FROM courses WHERE id = $1 AND lecturer_id = $2",
+                [courseId, lecturerId]
+            );
+            if (courseCheck.rows.length === 0) {
+                return res.status(403).json({ message: "Access denied. You do not manage this course." });
+            }
+        } else if (role !== "admin") {
+            return res.status(403).json({ message: "Access denied" });
+        }
+
+        await pool.query(
+            "DELETE FROM student_courses WHERE course_id = $1 AND student_id = $2",
+            [courseId, studentId]
+        );
+
+        res.json({ message: "Student removed from course roster successfully." });
+    } catch (error) {
+        console.error("Remove enrollment error:", error);
+        res.status(500).json({ message: "Failed to remove student enrollment." });
+    }
+});
+
+// Search students endpoint for enrollment modals and tools
+router.get("/students-search", authenticate, async (req, res) => {
+    try {
+        const q = String(req.query.q || "").trim();
+        if (!q) {
+            return res.json([]);
+        }
+        const result = await pool.query(
+            `SELECT id, student_number, full_name, email, programme 
+             FROM students 
+             WHERE full_name ILIKE $1 OR email ILIKE $1 OR student_number ILIKE $1 
+             ORDER BY full_name ASC LIMIT 20`,
+            [`%${q}%`]
+        );
+        res.json(result.rows);
+    } catch (error) {
+        console.error("students-search error:", error);
+        res.status(500).json({ message: "Failed to search students." });
+    }
+});
+
 
 // Get courses enrolled by a student
-// Admin may fetch any student's courses. A student may fetch only their own courses.
+// Admin may fetch any student's courses. A student may fetch only their own courses ("me" allowed).
 router.get("/students/:studentId/courses", authenticate, async (req, res) => {
     try {
         const authReq = req as AuthRequest;
         const role = authReq.userRole;
         const callerId = authReq.userId;
-        const { studentId } = req.params;
+        let { studentId } = req.params;
+
+        let targetStudentId = studentId;
 
         if (role === "student") {
             const userRow = await pool.query(
                 "SELECT linked_id FROM users WHERE id = $1 AND is_active = TRUE",
                 [callerId]
             );
-            if (userRow.rows.length === 0 || String(userRow.rows[0].linked_id) !== String(studentId)) {
+            if (userRow.rows.length === 0 || !userRow.rows[0].linked_id) {
+                return res.status(403).json({ message: "Access denied" });
+            }
+            const linkedId = String(userRow.rows[0].linked_id);
+            if (studentId === "me" || studentId === linkedId) {
+                targetStudentId = linkedId;
+            } else {
                 return res.status(403).json({ message: "Access denied" });
             }
         } else if (role !== "admin") {
-            // For non-admin, non-student roles (e.g., lecturer) deny here — lecturers should use lecturer-scoped courses
             return res.status(403).json({ message: "Access denied" });
         }
 
         const result = await pool.query(
             `
             SELECT
-                courses.id,
-                courses.course_code,
-                courses.course_name,
-                courses.programme
-            FROM student_courses
-            JOIN courses
-                ON student_courses.course_id = courses.id
-            WHERE student_courses.student_id = $1
-            ORDER BY courses.course_code ASC
+                c.id,
+                c.course_code,
+                c.course_name,
+                c.programme,
+                l.full_name AS lecturer_name,
+                COUNT(DISTINCT s.id)::int AS total_sessions,
+                COUNT(DISTINCT a.id) FILTER (WHERE a.status IN ('present', 'late'))::int AS attended_sessions
+            FROM student_courses sc
+            JOIN courses c ON sc.course_id = c.id
+            LEFT JOIN lecturers l ON c.lecturer_id = l.id
+            LEFT JOIN sessions s ON s.course_id = c.id
+            LEFT JOIN attendance a ON a.session_id = s.id AND a.student_id = sc.student_id
+            WHERE sc.student_id = $1
+            GROUP BY c.id, c.course_code, c.course_name, c.programme, l.full_name
+            ORDER BY c.course_code ASC
             `,
-            [studentId]
+            [targetStudentId]
         );
 
-        res.json(result.rows);
+        const enriched = result.rows.map(row => {
+            const total = Number(row.total_sessions) || 0;
+            const attended = Number(row.attended_sessions) || 0;
+            const rate = total > 0 ? Number(((attended / total) * 100).toFixed(1)) : 100;
+            return {
+                ...row,
+                attendance_rate: rate,
+                status: "Enrolled"
+            };
+        });
+
+        res.json(enriched);
 
     } catch (error) {
         console.error("Get student courses error:", error);

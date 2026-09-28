@@ -19,12 +19,15 @@ import Assistant          from "./pages/Assistant";
 
 /* ── Lecturer pages ── */
 import LecturerDashboard  from "./pages/LecturerDashboard";
+import LecturerCourses    from "./pages/LecturerCourses";
+import LecturerCourseDetail from "./pages/LecturerCourseDetail";
 import QRAttendance       from "./pages/QRAttendance";
 import LecturerSettings   from "./pages/LecturerSettings";
 import StudentSettings    from "./pages/StudentSettings";
 
 /* ── Student pages ── */
 import StudentDashboard   from "./pages/StudentDashboard";
+import StudentCourses     from "./pages/StudentCourses";
 import Profile            from "./pages/Profile";
 
 import type { UserRole } from "./context/AuthContext";
@@ -112,7 +115,9 @@ export default function App() {
         <Route element={<RequireAuth allowedRoles={["lecturer"]} />}>
           <Route element={<AppLayout />}>
             {/* Lecturer dashboard */}
-            <Route path="/lecturer/dashboard"      element={<LecturerDashboard />} />
+            <Route path="/lecturer/dashboard"          element={<LecturerDashboard />} />
+            <Route path="/lecturer/courses"            element={<LecturerCourses />} />
+            <Route path="/lecturer/courses/:courseId"  element={<LecturerCourseDetail />} />
 
             {/* Lecturer-specific tools */}
             <Route path="/lecturer/qr-attendance"  element={<QRAttendance />} />
@@ -136,6 +141,7 @@ export default function App() {
           <Route element={<AppLayout />}>
             {/* Student dashboard */}
             <Route path="/student/dashboard"   element={<StudentDashboard />} />
+            <Route path="/student/courses"     element={<StudentCourses />} />
 
             {/* Student tools — read-only attendance, scan */}
             <Route path="/student/attendance"  element={<Attendance />} />
