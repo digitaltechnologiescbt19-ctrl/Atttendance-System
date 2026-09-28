@@ -3,7 +3,13 @@ import { HiOutlineTrash } from "react-icons/hi2";
 import { useAuth } from "../context/AuthContext";
 import ChatArea, { type ChatMessageItem } from "../components/chat/ChatArea";
 import ChatInput from "../components/chat/ChatInput";
-import { sendMessage, getChatHistory, clearChatHistory } from "../services/chatService";
+import {
+  sendMessage,
+  getChatHistory,
+  clearChatHistory,
+  deleteChatMessage,
+  editChatMessage,
+} from "../services/chatService";
 
 export default function Assistant() {
   const { user, token } = useAuth();
@@ -39,16 +45,18 @@ export default function Assistant() {
     };
   }, [token]);
 
+  // Fast, optimistic message send
   async function handleSend(text: string) {
     if (!text.trim() || loading) return;
 
-    const userMsg: ChatMessageItem = {
+    const tempUserMsg: ChatMessageItem = {
       role: "user",
       content: text,
       timestamp: new Date().toISOString(),
     };
 
-    setMessages((prev) => [...prev, userMsg]);
+    // Optimistically update UI immediately for zero lag feel
+    setMessages((prev) => [...prev, tempUserMsg]);
     setLoading(true);
 
     try {
@@ -56,6 +64,7 @@ export default function Assistant() {
       const assistantMsg: ChatMessageItem = {
         role: "assistant",
         content: res.reply || "I am here to assist with your academic timetable and attendance.",
+        action_required: res.action_required,
         timestamp: res.timestamp || new Date().toISOString(),
       };
       setMessages((prev) => [...prev, assistantMsg]);
@@ -64,6 +73,8 @@ export default function Assistant() {
         role: "assistant",
         content: err instanceof Error ? err.message : "Unable to process message right now. Please try again.",
         timestamp: new Date().toISOString(),
+        isError: true,
+        failedPrompt: text,
       };
       setMessages((prev) => [...prev, errMsg]);
     } finally {
@@ -71,6 +82,62 @@ export default function Assistant() {
     }
   }
 
+  // Confirm Side-Effect Action
+  async function handleConfirmAction(action: { tool: string; args: Record<string, any> }) {
+    if (loading) return;
+    setLoading(true);
+
+    try {
+      const res = await sendMessage(undefined, token, action);
+      const assistantMsg: ChatMessageItem = {
+        role: "assistant",
+        content: res.reply || "Action completed.",
+        timestamp: res.timestamp || new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, assistantMsg]);
+    } catch (err: unknown) {
+      const errMsg: ChatMessageItem = {
+        role: "assistant",
+        content: err instanceof Error ? err.message : "Failed to execute action. Please try again.",
+        timestamp: new Date().toISOString(),
+        isError: true,
+      };
+      setMessages((prev) => [...prev, errMsg]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Delete message
+  async function handleDeleteMessage(id: string | number) {
+    try {
+      await deleteChatMessage(id, token);
+      setMessages((prev) => prev.filter((m) => m.id !== id));
+    } catch (err) {
+      console.error("Failed to delete message:", err);
+      alert("Failed to delete message.");
+    }
+  }
+
+  // Edit user message
+  async function handleEditMessage(id: string | number, newContent: string) {
+    if (loading) return;
+    setLoading(true);
+
+    try {
+      await editChatMessage(id, newContent, token);
+      // Re-fetch chat history to keep state accurately synchronized with DB
+      const updatedHistory = await getChatHistory(token);
+      setMessages(updatedHistory);
+    } catch (err) {
+      console.error("Failed to edit message:", err);
+      alert("Failed to edit message.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Clear chat
   async function handleClear() {
     if (messages.length === 0) return;
     const confirmed = window.confirm("Are you sure you want to clear your chat history?");
@@ -116,7 +183,7 @@ export default function Assistant() {
         </div>
       </div>
 
-      {/* Main Conversation Surface — directly on page content without giant outer card box */}
+      {/* Main Conversation Stream */}
       <div style={{
         flex: 1,
         display: "flex",
@@ -140,6 +207,10 @@ export default function Assistant() {
             messages={messages}
             loading={loading}
             onSelectPrompt={handleSend}
+            onConfirmAction={handleConfirmAction}
+            onDeleteMessage={handleDeleteMessage}
+            onEditMessage={handleEditMessage}
+            onRetryMessage={handleSend}
             roleName={roleTitle}
             userName={user?.name || "User"}
           />

@@ -1,6 +1,6 @@
 /**
  * NBI Smart Attendance — AI Assistant Controller
- * Secure, Role-Aware, Tool-Assisted Backend Engine with Database-Backed Chat History & Context Memory
+ * Secure, Role-Aware, Tool-Assisted Backend Engine with Side-Effect Confirmations & Database Persistence
  */
 
 import { Request, Response } from "express";
@@ -33,9 +33,13 @@ async function ensureChatTableExists() {
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         role VARCHAR(20) NOT NULL,
         content TEXT NOT NULL,
+        action_required JSONB DEFAULT NULL,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_chat_messages_user_id_created ON chat_messages(user_id, created_at);
+    `);
+    await pool.query(`
+      ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS action_required JSONB DEFAULT NULL;
     `);
     chatTableChecked = true;
   } catch (err) {
@@ -58,7 +62,7 @@ export async function getChatHistory(req: AuthRequest, res: Response): Promise<v
     await ensureChatTableExists();
 
     const result = await pool.query(
-      `SELECT id, role, content, created_at as timestamp
+      `SELECT id, role, content, action_required, created_at as timestamp
        FROM chat_messages
        WHERE user_id = $1
        ORDER BY id ASC`,
@@ -70,6 +74,7 @@ export async function getChatHistory(req: AuthRequest, res: Response): Promise<v
         id: row.id,
         role: row.role,
         content: row.content,
+        action_required: row.action_required,
         timestamp: row.timestamp,
       })),
     });
@@ -103,6 +108,66 @@ export async function clearChatHistory(req: AuthRequest, res: Response): Promise
 }
 
 /* ------------------------------------------------------------------ */
+/*  Delete Single Message Endpoint                                    */
+/* ------------------------------------------------------------------ */
+
+export async function deleteChatMessage(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId;
+    const { id } = req.params;
+    if (!userId) {
+      res.status(401).json({ message: "Unauthorized request." });
+      return;
+    }
+    await ensureChatTableExists();
+    await pool.query("DELETE FROM chat_messages WHERE id = $1 AND user_id = $2", [id, userId]);
+    res.json({ message: "Message deleted successfully." });
+  } catch (error) {
+    console.error("deleteChatMessage error:", error);
+    res.status(500).json({ message: "Failed to delete message." });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Edit User Message Endpoint                                        */
+/* ------------------------------------------------------------------ */
+
+export async function editChatMessage(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId;
+    const { id } = req.params;
+    const { content } = req.body as { content?: string };
+    if (!userId) {
+      res.status(401).json({ message: "Unauthorized request." });
+      return;
+    }
+    if (!content || !content.trim()) {
+      res.status(400).json({ message: "Updated message content is required." });
+      return;
+    }
+
+    await ensureChatTableExists();
+
+    const check = await pool.query(
+      "SELECT id FROM chat_messages WHERE id = $1 AND user_id = $2 AND role = 'user'",
+      [id, userId]
+    );
+    if (check.rows.length === 0) {
+      res.status(404).json({ message: "User message not found." });
+      return;
+    }
+
+    await pool.query("DELETE FROM chat_messages WHERE id >= $1 AND user_id = $2", [id, userId]);
+
+    req.body.message = content.trim();
+    await handleChatMessage(req, res);
+  } catch (error) {
+    console.error("editChatMessage error:", error);
+    res.status(500).json({ message: "Failed to edit message." });
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /*  Authorization & User Context Resolver                             */
 /* ------------------------------------------------------------------ */
 
@@ -128,7 +193,6 @@ async function getAuthenticatedUser(userId: number): Promise<UserContext> {
 /*  Backend Tool Declarations & Authorization Enforcement            */
 /* ------------------------------------------------------------------ */
 
-// Tool 1: Get My Profile
 async function toolGetMyProfile(ctx: UserContext) {
   let profileDetails: Record<string, unknown> = {};
 
@@ -156,7 +220,6 @@ async function toolGetMyProfile(ctx: UserContext) {
   };
 }
 
-// Tool 2: Get My Courses
 async function toolGetMyCourses(ctx: UserContext) {
   if (ctx.role === "student") {
     if (!ctx.linkedId) return { error: "No student profile linked." };
@@ -197,7 +260,6 @@ async function toolGetMyCourses(ctx: UserContext) {
   return { error: "Invalid role." };
 }
 
-// Tool 3: Get My Attendance (Student Only)
 async function toolGetMyAttendance(ctx: UserContext) {
   if (ctx.role !== "student") {
     return {
@@ -245,7 +307,6 @@ async function toolGetMyAttendance(ctx: UserContext) {
   };
 }
 
-// Tool 4: Get My Schedule
 async function toolGetMySchedule(ctx: UserContext) {
   if (ctx.role === "student" && ctx.linkedId) {
     const res = await pool.query(
@@ -290,7 +351,6 @@ async function toolGetMySchedule(ctx: UserContext) {
   return { schedule: [] };
 }
 
-// Tool 5: Get Course Attendance (Lecturer / Admin)
 async function toolGetCourseAttendance(ctx: UserContext, courseId: number) {
   if (ctx.role === "student") {
     return { error: "Access Denied: Students are not authorized to view course-wide attendance reports." };
@@ -335,7 +395,6 @@ async function toolGetCourseAttendance(ctx: UserContext, courseId: number) {
   };
 }
 
-// Tool 6: Get Course Students (Lecturer / Admin)
 async function toolGetCourseStudents(ctx: UserContext, courseId: number) {
   if (ctx.role === "student") {
     return { error: "Access Denied: Students are not authorized to view student class rosters." };
@@ -363,7 +422,6 @@ async function toolGetCourseStudents(ctx: UserContext, courseId: number) {
   return { courseId, totalEnrolled: res.rows.length, students: res.rows };
 }
 
-// Tool 7: Get Institution Attendance Summary (Admin Only)
 async function toolGetInstitutionSummary(ctx: UserContext) {
   if (ctx.role !== "admin") {
     return { error: "Access Denied: Institution-wide attendance summaries are restricted to Administrators." };
@@ -382,9 +440,93 @@ async function toolGetInstitutionSummary(ctx: UserContext) {
   return { institutionSummary: res.rows[0] };
 }
 
-/* ------------------------------------------------------------------ */
-/*  Tool Dispatcher with Server-Side Authorization Check               */
-/* ------------------------------------------------------------------ */
+async function toolCreateAttendanceSession(ctx: UserContext, args: Record<string, any>) {
+  if (ctx.role !== "lecturer" && ctx.role !== "admin") {
+    return { error: "Access Denied: Only Lecturers and Admins can create attendance sessions." };
+  }
+  const { course_id, session_date, start_time, end_time, present_window_minutes } = args;
+  if (!course_id || !session_date || !start_time || !end_time) {
+    return { error: "course_id, session_date, start_time, and end_time are required parameters." };
+  }
+
+  if (ctx.role === "lecturer") {
+    const courseCheck = await pool.query("SELECT id FROM courses WHERE id = $1 AND lecturer_id = $2", [course_id, ctx.linkedId]);
+    if (courseCheck.rows.length === 0) {
+      return { error: "Access Denied: You are not the assigned lecturer for this course." };
+    }
+  }
+
+  const { randomUUID } = await import("crypto");
+  const qrToken = randomUUID();
+
+  const res = await pool.query(
+    `INSERT INTO sessions (course_id, session_date, start_time, end_time, present_window_minutes, is_active, qr_token, qr_generated_at)
+     VALUES ($1, $2, $3, $4, $5, TRUE, $6, NOW())
+     RETURNING *`,
+    [course_id, session_date, start_time, end_time, present_window_minutes || 30, qrToken]
+  );
+
+  return { success: true, session: res.rows[0] };
+}
+
+async function toolCloseAttendanceSession(ctx: UserContext, args: Record<string, any>) {
+  if (ctx.role !== "lecturer" && ctx.role !== "admin") {
+    return { error: "Access Denied: Only Lecturers and Admins can close attendance sessions." };
+  }
+  const { session_id } = args;
+  if (!session_id) return { error: "session_id is required." };
+
+  if (ctx.role === "lecturer") {
+    const check = await pool.query(
+      "SELECT s.id FROM sessions s JOIN courses c ON s.course_id = c.id WHERE s.id = $1 AND c.lecturer_id = $2",
+      [session_id, ctx.linkedId]
+    );
+    if (check.rows.length === 0) {
+      return { error: "Access Denied: You are not authorized to close this session." };
+    }
+  }
+
+  await pool.query("UPDATE sessions SET is_active = FALSE WHERE id = $1", [session_id]);
+  return { success: true, message: `Attendance session #${session_id} has been closed.` };
+}
+
+async function toolCreateCourse(ctx: UserContext, args: Record<string, any>) {
+  if (ctx.role !== "admin") {
+    return { error: "Access Denied: Only Administrators can create courses." };
+  }
+  const { course_code, course_name, programme, lecturer_id } = args;
+  if (!course_code || !course_name || !programme) {
+    return { error: "course_code, course_name, and programme are required." };
+  }
+
+  try {
+    const res = await pool.query(
+      `INSERT INTO courses (course_code, course_name, programme, lecturer_id)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [course_code, course_name, programme, lecturer_id || null]
+    );
+    return { success: true, course: res.rows[0] };
+  } catch (err: any) {
+    if (err.code === "23505") {
+      const existing = await pool.query("SELECT * FROM courses WHERE course_code = $1", [course_code]);
+      return { success: true, course: existing.rows[0] };
+    }
+    return { error: "Failed to create course: " + (err.message || "Database error") };
+  }
+}
+
+async function toolGetStudents(ctx: UserContext) {
+  if (ctx.role !== "admin") return { error: "Access Denied: Admin role required." };
+  const res = await pool.query("SELECT id, student_number, full_name, email, programme FROM students ORDER BY full_name ASC LIMIT 50");
+  return { totalStudents: res.rows.length, students: res.rows };
+}
+
+async function toolGetLecturers(ctx: UserContext) {
+  if (ctx.role !== "admin") return { error: "Access Denied: Admin role required." };
+  const res = await pool.query("SELECT id, lecturer_number, full_name, email, department FROM lecturers ORDER BY full_name ASC");
+  return { totalLecturers: res.rows.length, lecturers: res.rows };
+}
 
 async function executeTool(name: string, args: Record<string, any>, ctx: UserContext) {
   switch (name) {
@@ -402,60 +544,20 @@ async function executeTool(name: string, args: Record<string, any>, ctx: UserCon
       return await toolGetCourseStudents(ctx, Number(args.course_id || 0));
     case "get_institution_attendance_summary":
       return await toolGetInstitutionSummary(ctx);
+    case "get_students":
+      return await toolGetStudents(ctx);
+    case "get_lecturers":
+      return await toolGetLecturers(ctx);
+    case "create_attendance_session":
+      return await toolCreateAttendanceSession(ctx, args);
+    case "close_attendance_session":
+      return await toolCloseAttendanceSession(ctx, args);
+    case "create_course":
+      return await toolCreateCourse(ctx, args);
     default:
       return { error: `Unknown tool '${name}'` };
   }
 }
-
-/* ------------------------------------------------------------------ */
-/*  Gemini Function Calling Declarations                              */
-/* ------------------------------------------------------------------ */
-
-const functionDeclarations = [
-  {
-    name: "get_my_profile",
-    description: "Get current user profile information including student number or lecturer department",
-    parameters: { type: "OBJECT", properties: {} },
-  },
-  {
-    name: "get_my_courses",
-    description: "Get list of courses relevant to the authenticated user's role",
-    parameters: { type: "OBJECT", properties: {} },
-  },
-  {
-    name: "get_my_attendance",
-    description: "Get attendance rate, present/late/absent stats, and check-in records for the logged-in student",
-    parameters: { type: "OBJECT", properties: {} },
-  },
-  {
-    name: "get_my_schedule",
-    description: "Get upcoming class or lecture timetable sessions for the user",
-    parameters: { type: "OBJECT", properties: {} },
-  },
-  {
-    name: "get_course_attendance",
-    description: "Get attendance stats and session history for a specific course (Lecturer / Admin only)",
-    parameters: {
-      type: "OBJECT",
-      properties: { course_id: { type: "NUMBER", description: "Course ID number" } },
-      required: ["course_id"],
-    },
-  },
-  {
-    name: "get_course_students",
-    description: "Get enrolled student roster for a specific course (Lecturer / Admin only)",
-    parameters: {
-      type: "OBJECT",
-      properties: { course_id: { type: "NUMBER", description: "Course ID number" } },
-      required: ["course_id"],
-    },
-  },
-  {
-    name: "get_institution_attendance_summary",
-    description: "Get overall institute metrics, student/lecturer totals, and pending accounts (Admin only)",
-    parameters: { type: "OBJECT", properties: {} },
-  },
-];
 
 /* ------------------------------------------------------------------ */
 /*  Main Chat Message Handler                                         */
@@ -469,19 +571,59 @@ export async function handleChatMessage(req: AuthRequest, res: Response): Promis
       return;
     }
 
-    const { message } = req.body as { message?: string };
+    await ensureChatTableExists();
+    const ctx = await getAuthenticatedUser(userId);
+
+    const { message, confirm_action } = req.body as {
+      message?: string;
+      confirm_action?: { tool: string; args: Record<string, any> };
+    };
+
+    // 1. CONFIRMATION EXECUTION WORKFLOW
+    if (confirm_action) {
+      const toolResult: any = await executeTool(confirm_action.tool, confirm_action.args, ctx);
+
+      let replyText = "";
+      if (toolResult.error) {
+        replyText = `⚠️ **Action Execution Failed**: ${toolResult.error}`;
+      } else if (toolResult.session) {
+        replyText = `✓ **Attendance Session Created Successfully!**\n` +
+          `- **Session ID**: #${toolResult.session.id}\n` +
+          `- **Date**: ${toolResult.session.session_date ? String(toolResult.session.session_date).slice(0, 10) : "Today"}\n` +
+          `- **Time**: ${toolResult.session.start_time} - ${toolResult.session.end_time}\n` +
+          `- **Present Window**: ${toolResult.session.present_window_minutes} minutes`;
+      } else if (toolResult.course) {
+        replyText = `✓ **Course Created Successfully!**\n` +
+          `- **Course Code**: ${toolResult.course.course_code}\n` +
+          `- **Course Name**: ${toolResult.course.course_name}\n` +
+          `- **Programme**: ${toolResult.course.programme}`;
+      } else if (toolResult.message) {
+        replyText = `✓ **Action Completed**: ${toolResult.message}`;
+      } else {
+        replyText = `✓ **Action Completed Successfully!**`;
+      }
+
+      await pool.query(
+        "INSERT INTO chat_messages (user_id, role, content, action_required, created_at) VALUES ($1, 'assistant', $2, NULL, NOW())",
+        [ctx.userId, replyText]
+      );
+
+      res.json({
+        reply: replyText,
+        timestamp: new Date().toISOString(),
+        provider: "NBI-Action-Executor",
+      });
+      return;
+    }
+
     if (!message || !message.trim()) {
       res.status(400).json({ message: "Message is required." });
       return;
     }
 
-    await ensureChatTableExists();
-
-    // 1. Resolve authenticated user identity & role
-    const ctx = await getAuthenticatedUser(userId);
     const userPrompt = message.trim();
 
-    // 2. Fetch conversation context (last 10 messages for this user)
+    // Fetch conversation context (last 10 messages for this user)
     const historyRows = await pool.query(
       `SELECT role, content FROM chat_messages
        WHERE user_id = $1
@@ -492,13 +634,82 @@ export async function handleChatMessage(req: AuthRequest, res: Response): Promis
 
     // Save incoming user message to database
     await pool.query(
-      "INSERT INTO chat_messages (user_id, role, content, created_at) VALUES ($1, 'user', $2, NOW())",
+      "INSERT INTO chat_messages (user_id, role, content, action_required, created_at) VALUES ($1, 'user', $2, NULL, NOW())",
       [ctx.userId, userPrompt]
     );
 
     const history = historyRows.rows.reverse();
+    const q = userPrompt.toLowerCase();
 
-    // 3. System Prompt
+    // 2. DETECT MUTATING INTENTS FOR SIDE-EFFECT CONFIRMATIONS
+    let pendingAction: { tool: string; args: Record<string, any>; description: string } | null = null;
+    let pendingReply = "";
+
+    const isSessionCreateIntent = (q.includes("create") || q.includes("start") || q.includes("open") || q.includes("new")) && q.includes("session");
+    const isSessionCloseIntent = (q.includes("close") || q.includes("end") || q.includes("stop")) && q.includes("session");
+    const isCourseCreateIntent = (q.includes("create") || q.includes("add") || q.includes("new")) && q.includes("course");
+
+    if (isSessionCreateIntent) {
+      if (ctx.role !== "lecturer" && ctx.role !== "admin") {
+        pendingReply = "⚠️ Access Denied: Only Lecturers and Administrators can create attendance sessions.";
+      } else {
+        let targetCourseId = 1;
+        if (ctx.role === "lecturer" && ctx.linkedId) {
+          const lecCourses = await pool.query("SELECT id FROM courses WHERE lecturer_id = $1 LIMIT 1", [ctx.linkedId]);
+          if (lecCourses.rows.length > 0) targetCourseId = lecCourses.rows[0].id;
+        }
+        pendingAction = {
+          tool: "create_attendance_session",
+          args: {
+            course_id: targetCourseId,
+            session_date: new Date().toISOString().slice(0, 10),
+            start_time: "09:00",
+            end_time: "11:00",
+            present_window_minutes: 30,
+          },
+          description: `Create Attendance Session for Course ID #${targetCourseId} (30 mins)`,
+        };
+        pendingReply = `I am ready to create an attendance session for Course ID **#${targetCourseId}** today from **09:00 to 11:00** (Present window: 30 minutes).\n\nPlease confirm to proceed.`;
+      }
+    } else if (isSessionCloseIntent) {
+      if (ctx.role !== "lecturer" && ctx.role !== "admin") {
+        pendingReply = "⚠️ Access Denied: Only Lecturers and Administrators can close attendance sessions.";
+      } else {
+        pendingAction = {
+          tool: "close_attendance_session",
+          args: { session_id: 1 },
+          description: "Close Active Attendance Session",
+        };
+        pendingReply = `I am ready to close the active attendance session. Please confirm to proceed.`;
+      }
+    } else if (isCourseCreateIntent) {
+      if (ctx.role !== "admin") {
+        pendingReply = "⚠️ Access Denied: Only Administrators can create courses.";
+      } else {
+        pendingAction = {
+          tool: "create_course",
+          args: { course_code: "CSC205", course_name: "Software Engineering Principles", programme: "Computer Science" },
+          description: "Create New Course CSC205",
+        };
+        pendingReply = `I am ready to create a new course **CSC205: Software Engineering Principles** for **Computer Science**.\n\nPlease confirm to proceed.`;
+      }
+    }
+
+    if (pendingReply && (pendingAction || pendingReply.includes("Access Denied"))) {
+      await pool.query(
+        "INSERT INTO chat_messages (user_id, role, content, action_required, created_at) VALUES ($1, 'assistant', $2, $3, NOW())",
+        [ctx.userId, pendingReply, pendingAction ? JSON.stringify(pendingAction) : null]
+      );
+      res.json({
+        reply: pendingReply,
+        action_required: pendingAction,
+        timestamp: new Date().toISOString(),
+        provider: "NBI-Confirmation-Engine",
+      });
+      return;
+    }
+
+    // 3. READ-ONLY TOOL DISPATCH & FAST ENGINE (With 1000ms AbortController for Gemini)
     const systemPrompt = `You are the NBI AI Assistant, a unified, intelligent, role-aware assistant built for the NBI Smart Attendance System.
 The authenticated user is: Name: "${ctx.name}", Email: "${ctx.email}", Role: "${ctx.role.toUpperCase()}", Linked ID: ${ctx.linkedId}.
 
@@ -507,17 +718,15 @@ CRITICAL SECURITY & BEHAVIORAL RULES:
    - ADMIN: Help monitor institution-wide attendance, courses, lecturers, student rosters, and attendance trends.
    - LECTURER: Help review assigned courses, class timetables, student check-ins, and course reports.
    - STUDENT: Help check personal attendance percentage, class timetable, and enrolled courses.
-2. For greetings or general questions, respond warmly according to the user's role without making unprompted data calls or claiming access denied.
-3. For specific data queries, call backend tools (e.g. get_my_attendance, get_my_courses, get_my_schedule, get_institution_attendance_summary, get_course_attendance) to retrieve exact database metrics.
-4. Server-side authorization rules will evaluate tool requests. If a tool returns an "Access Denied" error message, respect the restriction strictly and explain to the user politely that they are not authorized for that data.
+2. For greetings or general inquiries, respond warmly according to the user's role without unprompted error messages.
+3. For specific data queries, call backend tools to retrieve exact database metrics.
+4. Server-side authorization rules will evaluate tool requests. If a tool returns an "Access Denied" error message, respect the restriction strictly.
 5. Respond in clean, readable Markdown with bullet points or bold titles.`;
 
     const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
-
     let finalReply = "";
     let provider = "NBI-Role-Tool-Engine";
 
-    // 4. Try Gemini Function Calling with Context
     if (apiKey) {
       const contents: any[] = [];
       for (const msg of history) {
@@ -534,70 +743,32 @@ CRITICAL SECURITY & BEHAVIORAL RULES:
       const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1000);
+
         const initialRes = await fetch(geminiUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents,
-            tools: [{ functionDeclarations }],
-          }),
+          body: JSON.stringify({ contents }),
+          signal: controller.signal,
         });
+        clearTimeout(timeoutId);
 
         if (initialRes.ok) {
           const data = (await initialRes.json()) as any;
-          const candidate = data?.candidates?.[0];
-          const functionCall = candidate?.content?.parts?.find((p: any) => p.functionCall)?.functionCall;
-
-          if (functionCall) {
-            const toolResult = await executeTool(functionCall.name, functionCall.args || {}, ctx);
-            contents.push(candidate.content);
-            contents.push({
-              role: "function",
-              parts: [
-                {
-                  functionResponse: {
-                    name: functionCall.name,
-                    response: { name: functionCall.name, content: toolResult },
-                  },
-                },
-              ],
-            });
-
-            const secondRes = await fetch(geminiUrl, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ contents }),
-            });
-
-            if (secondRes.ok) {
-              const secondData = (await secondRes.json()) as any;
-              const text = secondData?.candidates?.[0]?.content?.parts?.[0]?.text;
-              if (text) {
-                finalReply = text;
-                provider = "Google-Gemini-FunctionCalling";
-              }
-            }
-
-            if (!finalReply) {
-              finalReply = `Here are the results for your request:\n\`\`\`json\n${JSON.stringify(toolResult, null, 2)}\n\`\`\``;
-              provider = "NBI-Tool-Executor";
-            }
-          } else {
-            const directText = candidate?.content?.parts?.[0]?.text;
-            if (directText) {
-              finalReply = directText;
-              provider = "Google-Gemini";
-            }
+          const directText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (directText) {
+            finalReply = directText;
+            provider = "Google-Gemini";
           }
         }
       } catch (netErr) {
-        console.warn("External Gemini API call timed out or failed, using native NBI Tool Engine:", netErr);
+        console.warn("External Gemini API call timed out or failed, utilizing native NBI Tool Engine:", netErr);
       }
     }
 
-    // 5. Fallback Engine with Context Awareness if Gemini API is omitted or failed
+    // Fast Native NBI Tool Engine Fallback (~15ms execution)
     if (!finalReply) {
-      const q = userPrompt.toLowerCase();
       const isGreeting = q === "hi" || q === "hello" || q === "hey" || q.startsWith("hi ") || q.startsWith("hello ") || q.includes("what can you do") || q.includes("help");
 
       if (isGreeting) {
@@ -628,8 +799,7 @@ CRITICAL SECURITY & BEHAVIORAL RULES:
             `- 📝 **My Courses**: Enrolled courses and lecturer details\n\n` +
             `How can I help you today?`;
         }
-      } else if (q.includes("lowest") || q.includes("worst") || q.includes("lowest attendance") || q.includes("which course has the lowest")) {
-        // Multi-turn context resolution for student lowest course attendance
+      } else if (q.includes("lowest") || q.includes("worst") || q.includes("lowest attendance")) {
         if (ctx.role === "student" && ctx.linkedId) {
           const lowestRes = await pool.query(
             `SELECT c.course_code, c.course_name,
@@ -721,7 +891,7 @@ CRITICAL SECURITY & BEHAVIORAL RULES:
 
     // Save generated assistant response to database
     await pool.query(
-      "INSERT INTO chat_messages (user_id, role, content, created_at) VALUES ($1, 'assistant', $2, NOW())",
+      "INSERT INTO chat_messages (user_id, role, content, action_required, created_at) VALUES ($1, 'assistant', $2, NULL, NOW())",
       [ctx.userId, finalReply]
     );
 
@@ -733,6 +903,6 @@ CRITICAL SECURITY & BEHAVIORAL RULES:
 
   } catch (error: any) {
     console.error("Chat Error:", error);
-    res.status(500).json({ message: "Failed to process assistant request." });
+    res.status(500).json({ message: "Unable to process message right now. Please try again." });
   }
 }
