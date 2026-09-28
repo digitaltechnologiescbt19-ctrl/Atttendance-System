@@ -382,7 +382,7 @@ async function toolGetCourseAttendance(ctx: UserContext, courseId: number) {
   );
 
   const sessionsRes = await pool.query(
-    `SELECT id, session_date, start_time, end_time, status
+    `SELECT id, session_date, start_time, end_time, is_active
      FROM sessions WHERE course_id = $1
      ORDER BY session_date DESC LIMIT 5`,
     [courseId]
@@ -953,10 +953,10 @@ export async function handleChatMessage(req: AuthRequest, res: Response): Promis
     let pendingAction: { tool: string; args: Record<string, any>; description: string } | null = null;
     let pendingReply = "";
 
-    const isDiagnoseIntent = q.includes("diagnose") || q.includes("not accepting scans") || q.includes("can't scan") || q.includes("cant scan") || q.includes("session isn't") || q.includes("why is session") || q.includes("expired") || q.includes("issue");
-    const isSessionCreateIntent = (q.includes("create") || q.includes("start") || q.includes("open") || q.includes("new")) && q.includes("session");
-    const isSessionCloseIntent = (q.includes("close") || q.includes("end") || q.includes("stop")) && q.includes("session");
-    const isCourseCreateIntent = (q.includes("create") || q.includes("add") || q.includes("new")) && q.includes("course");
+    const isDiagnoseIntent = /\b(diagnose|expired|issue|problem|broken|fix)\b/i.test(userPrompt) || q.includes("accepting scans") || q.includes("can't scan") || q.includes("cant scan") || q.includes("session isn't") || q.includes("why is session") || q.includes("why isn't");
+    const isSessionCreateIntent = /\b(create|start|open|new)\b/i.test(userPrompt) && /\bsessions?\b/i.test(userPrompt);
+    const isSessionCloseIntent = /\b(close|end|stop|terminate)\b/i.test(userPrompt) && /\bsessions?\b/i.test(userPrompt);
+    const isCourseCreateIntent = /\b(create|add|new)\b/i.test(userPrompt) && /\bcourses?\b/i.test(userPrompt);
 
     if (isDiagnoseIntent && (ctx.role === "lecturer" || ctx.role === "admin")) {
       const diag: any = await toolDiagnoseSessionIssue(ctx, {});
@@ -1162,6 +1162,13 @@ CRITICAL SECURITY & BEHAVIORAL RULES:
           toolData = await executeTool("get_my_profile", {}, ctx);
         } else if (q.includes("class") || q.includes("timetable") || q.includes("schedule") || q.includes("next")) {
           toolData = await executeTool("get_my_schedule", {}, ctx);
+        } else if (ctx.role === "lecturer" && q.includes("attendance") && (q.includes("course") || q.includes("csc") || q.includes("cs"))) {
+          let targetCourseId = 1;
+          if (ctx.linkedId) {
+            const cRes = await pool.query("SELECT id FROM courses WHERE lecturer_id = $1 LIMIT 1", [ctx.linkedId]);
+            if (cRes.rows.length > 0) targetCourseId = cRes.rows[0].id;
+          }
+          toolData = await executeTool("get_course_attendance", { course_id: targetCourseId }, ctx);
         } else if (q.includes("course") || q.includes("subject")) {
           toolData = await executeTool("get_my_courses", {}, ctx);
         } else if (q.includes("summary") || q.includes("institute") || q.includes("total students") || q.includes("overview") || q.includes("metric") || q.includes("trend")) {
