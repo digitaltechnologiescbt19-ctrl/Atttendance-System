@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { handleChatMessage } from "../controllers/chat.controller";
+import { handleChatMessage, getChatHistory, clearChatHistory } from "../controllers/chat.controller";
 import { authenticate } from "../middleware/auth.middleware";
 
 const router = Router();
@@ -9,6 +9,10 @@ router.get("/", (_req, res) => {
         message: "NBI AI Assistant Chat API Active",
     });
 });
+
+router.get("/history", authenticate, getChatHistory);
+
+router.delete("/history", authenticate, clearChatHistory);
 
 router.post("/", authenticate, handleChatMessage);
 

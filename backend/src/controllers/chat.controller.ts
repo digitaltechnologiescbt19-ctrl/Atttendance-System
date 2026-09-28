@@ -1,6 +1,6 @@
 /**
  * NBI Smart Attendance — AI Assistant Controller
- * Secure, Role-Aware, Tool-Assisted Backend Engine
+ * Secure, Role-Aware, Tool-Assisted Backend Engine with Database-Backed Chat History & Context Memory
  */
 
 import { Request, Response } from "express";
@@ -17,6 +17,89 @@ interface UserContext {
   name: string;
   role: "admin" | "lecturer" | "student";
   linkedId: number | null;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Database Persistence for Chat Messages                            */
+/* ------------------------------------------------------------------ */
+
+let chatTableChecked = false;
+async function ensureChatTableExists() {
+  if (chatTableChecked) return;
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS chat_messages (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        role VARCHAR(20) NOT NULL,
+        content TEXT NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_chat_messages_user_id_created ON chat_messages(user_id, created_at);
+    `);
+    chatTableChecked = true;
+  } catch (err) {
+    console.error("Error creating chat_messages table:", err);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Get Chat History Endpoint (Account-Scoped)                        */
+/* ------------------------------------------------------------------ */
+
+export async function getChatHistory(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId;
+    if (!userId) {
+      res.status(401).json({ message: "Unauthorized request." });
+      return;
+    }
+
+    await ensureChatTableExists();
+
+    const result = await pool.query(
+      `SELECT id, role, content, created_at as timestamp
+       FROM chat_messages
+       WHERE user_id = $1
+       ORDER BY id ASC`,
+      [userId]
+    );
+
+    res.json({
+      messages: result.rows.map((row) => ({
+        id: row.id,
+        role: row.role,
+        content: row.content,
+        timestamp: row.timestamp,
+      })),
+    });
+  } catch (error) {
+    console.error("getChatHistory error:", error);
+    res.status(500).json({ message: "Failed to load chat history." });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Clear Chat History Endpoint (Account-Scoped)                      */
+/* ------------------------------------------------------------------ */
+
+export async function clearChatHistory(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const userId = req.userId;
+    if (!userId) {
+      res.status(401).json({ message: "Unauthorized request." });
+      return;
+    }
+
+    await ensureChatTableExists();
+
+    await pool.query("DELETE FROM chat_messages WHERE user_id = $1", [userId]);
+
+    res.json({ message: "Chat history cleared successfully." });
+  } catch (error) {
+    console.error("clearChatHistory error:", error);
+    res.status(500).json({ message: "Failed to clear chat history." });
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -214,7 +297,6 @@ async function toolGetCourseAttendance(ctx: UserContext, courseId: number) {
   }
 
   if (ctx.role === "lecturer") {
-    // Enforce server-side ownership check
     const check = await pool.query(
       "SELECT id FROM courses WHERE id = $1 AND lecturer_id = $2",
       [courseId, ctx.linkedId]
@@ -260,7 +342,6 @@ async function toolGetCourseStudents(ctx: UserContext, courseId: number) {
   }
 
   if (ctx.role === "lecturer") {
-    // Enforce server-side ownership check
     const check = await pool.query(
       "SELECT id FROM courses WHERE id = $1 AND lecturer_id = $2",
       [courseId, ctx.linkedId]
@@ -327,7 +408,7 @@ async function executeTool(name: string, args: Record<string, any>, ctx: UserCon
 }
 
 /* ------------------------------------------------------------------ */
-/*  Gemini Function Calling Integration & Fallback Engine             */
+/*  Gemini Function Calling Declarations                              */
 /* ------------------------------------------------------------------ */
 
 const functionDeclarations = [
@@ -376,6 +457,10 @@ const functionDeclarations = [
   },
 ];
 
+/* ------------------------------------------------------------------ */
+/*  Main Chat Message Handler                                         */
+/* ------------------------------------------------------------------ */
+
 export async function handleChatMessage(req: AuthRequest, res: Response): Promise<void> {
   try {
     const userId = req.userId;
@@ -390,268 +475,260 @@ export async function handleChatMessage(req: AuthRequest, res: Response): Promis
       return;
     }
 
+    await ensureChatTableExists();
+
     // 1. Resolve authenticated user identity & role
     const ctx = await getAuthenticatedUser(userId);
     const userPrompt = message.trim();
 
-    // 2. Check API Key
-    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+    // 2. Fetch conversation context (last 10 messages for this user)
+    const historyRows = await pool.query(
+      `SELECT role, content FROM chat_messages
+       WHERE user_id = $1
+       ORDER BY id DESC
+       LIMIT 10`,
+      [ctx.userId]
+    );
 
-    // Direct Intent Fallback Engine (when Gemini API key is omitted or for instant offline response)
-    if (!apiKey) {
-      const q = userPrompt.toLowerCase();
-      let toolData: any = {};
+    // Save incoming user message to database
+    await pool.query(
+      "INSERT INTO chat_messages (user_id, role, content, created_at) VALUES ($1, 'user', $2, NOW())",
+      [ctx.userId, userPrompt]
+    );
 
-      if (q.includes("profile") || q.includes("who am i") || q.includes("my account")) {
-        toolData = await executeTool("get_my_profile", {}, ctx);
-      } else if (q.includes("class") || q.includes("timetable") || q.includes("schedule") || q.includes("next")) {
-        toolData = await executeTool("get_my_schedule", {}, ctx);
-      } else if (q.includes("course") || q.includes("subject")) {
-        toolData = await executeTool("get_my_courses", {}, ctx);
-      } else if (q.includes("summary") || q.includes("institute") || q.includes("total students")) {
-        if (ctx.role === "admin") {
-          toolData = await executeTool("get_institution_attendance_summary", {}, ctx);
-        } else {
-          toolData = await executeTool("get_my_attendance", {}, ctx);
-        }
-      } else {
-        toolData = await executeTool("get_my_attendance", {}, ctx);
-      }
+    const history = historyRows.rows.reverse();
 
-      // Synthesize clear markdown response from tool execution
-      let reply = `Hello **${ctx.name}** (${ctx.role.toUpperCase()})!\n\n`;
-
-      if (toolData.error) {
-        reply += `⚠️ **Notice**: ${toolData.error}\n\nHow else can I assist with your attendance system tasks?`;
-      } else if (toolData.attendanceRate) {
-        reply += `Here is your current attendance summary:\n` +
-                 `- **Attendance Rate**: ${toolData.attendanceRate}\n` +
-                 `- **Present**: ${toolData.summary.present} sessions\n` +
-                 `- **Late**: ${toolData.summary.late} sessions\n` +
-                 `- **Absent**: ${toolData.summary.absent} sessions\n` +
-                 `- **Total Sessions**: ${toolData.summary.total}`;
-      } else if (toolData.courses) {
-        reply += `You have **${toolData.courses.length} courses** in the system:\n` +
-                 toolData.courses.map((c: any) => `- **${c.code}**: ${c.title}`).join("\n");
-      } else if (toolData.schedule) {
-        if (toolData.schedule.length === 0) {
-          reply += `You have no upcoming sessions scheduled at this time.`;
-        } else {
-          reply += `Your upcoming schedule:\n` +
-                   toolData.schedule.map((s: any) => `- **${s.code} - ${s.title}**: ${s.session_date.toString().slice(0, 10)} (${s.start_time} - ${s.end_time})`).join("\n");
-        }
-      } else if (toolData.institutionSummary) {
-        const s = toolData.institutionSummary;
-        reply += `**NBI Institute Overview**:\n` +
-                 `- **Registered Students**: ${s.total_students}\n` +
-                 `- **Lecturers**: ${s.total_lecturers}\n` +
-                 `- **Courses**: ${s.total_courses}\n` +
-                 `- **Sessions Recorded**: ${s.total_sessions}\n` +
-                 `- **Accounts Pending Activation**: ${s.pending_activations}`;
-      } else {
-        reply += `I am your NBI Smart Attendance AI Assistant. You can ask me about your schedule, attendance rate, assigned courses, or overall system metrics.`;
-      }
-
-      res.json({
-        reply,
-        timestamp: new Date().toISOString(),
-        provider: "NBI-Role-Tool-Engine",
-      });
-      return;
-    }
-
-    // 3. Call Google Gemini API with tool declarations (with network timeout fallback)
-    const systemPrompt = `You are the NBI Smart Attendance AI Assistant, an intelligent, role-aware assistant built specifically for NBI Institute.
+    // 3. System Prompt
+    const systemPrompt = `You are the NBI AI Assistant, a unified, intelligent, role-aware assistant built for the NBI Smart Attendance System.
 The authenticated user is: Name: "${ctx.name}", Email: "${ctx.email}", Role: "${ctx.role.toUpperCase()}", Linked ID: ${ctx.linkedId}.
 
 CRITICAL SECURITY & BEHAVIORAL RULES:
-1. When the user provides a greeting (e.g., "Hi", "Hello", "Hey") or a general inquiry about what you can do:
-   - For ADMIN users: Greet them warmly as an Administrator and explain that you can assist with institution attendance summaries, course registrations, lecturer profiles, student rosters, attendance reports, and attendance trends. Do NOT attempt to fetch personal student attendance records or state access denied.
-   - For LECTURER users: Greet them as a Lecturer and explain that you can assist with their assigned courses, class session schedules, student attendance, and course reports.
-   - For STUDENT users: Greet them as a Student and explain that you can assist with their personal attendance rate, class schedules, and course check-in history.
-2. For specific data queries, call backend tools (e.g. get_my_attendance, get_my_courses, get_my_schedule, get_institution_attendance_summary, get_course_attendance) to fetch data before answering questions about schedules, attendance, courses, or student records.
-3. Server-side authorization rules will evaluate tool requests. If a tool returns an "Access Denied" error message, respect the restriction strictly and explain to the user politely that they are not authorized for that data.
-4. Respond in clean, formatted Markdown with bullet points or bold titles.`;
+1. Identify yourself as the NBI AI Assistant. Understand your role-aware capabilities:
+   - ADMIN: Help monitor institution-wide attendance, courses, lecturers, student rosters, and attendance trends.
+   - LECTURER: Help review assigned courses, class timetables, student check-ins, and course reports.
+   - STUDENT: Help check personal attendance percentage, class timetable, and enrolled courses.
+2. For greetings or general questions, respond warmly according to the user's role without making unprompted data calls or claiming access denied.
+3. For specific data queries, call backend tools (e.g. get_my_attendance, get_my_courses, get_my_schedule, get_institution_attendance_summary, get_course_attendance) to retrieve exact database metrics.
+4. Server-side authorization rules will evaluate tool requests. If a tool returns an "Access Denied" error message, respect the restriction strictly and explain to the user politely that they are not authorized for that data.
+5. Respond in clean, readable Markdown with bullet points or bold titles.`;
 
-    const contents: any[] = [
-      {
+    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+
+    let finalReply = "";
+    let provider = "NBI-Role-Tool-Engine";
+
+    // 4. Try Gemini Function Calling with Context
+    if (apiKey) {
+      const contents: any[] = [];
+      for (const msg of history) {
+        contents.push({
+          role: msg.role === "assistant" ? "model" : "user",
+          parts: [{ text: msg.content }],
+        });
+      }
+      contents.push({
         role: "user",
         parts: [{ text: `${systemPrompt}\n\nUser Question: ${userPrompt}` }],
-      },
-    ];
-
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-
-    try {
-      const initialRes = await fetch(geminiUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents,
-          tools: [{ functionDeclarations }],
-        }),
       });
 
-      if (initialRes.ok) {
-        const data = (await initialRes.json()) as any;
-        const candidate = data?.candidates?.[0];
-        const functionCall = candidate?.content?.parts?.find((p: any) => p.functionCall)?.functionCall;
+      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
-        if (functionCall) {
-          // Execute backend tool with server-side authorization check
-          const toolResult = await executeTool(functionCall.name, functionCall.args || {}, ctx);
+      try {
+        const initialRes = await fetch(geminiUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents,
+            tools: [{ functionDeclarations }],
+          }),
+        });
 
-          // Send tool response back to Gemini to synthesize final answer
-          contents.push(candidate.content);
-          contents.push({
-            role: "function",
-            parts: [
-              {
-                functionResponse: {
-                  name: functionCall.name,
-                  response: { name: functionCall.name, content: toolResult },
+        if (initialRes.ok) {
+          const data = (await initialRes.json()) as any;
+          const candidate = data?.candidates?.[0];
+          const functionCall = candidate?.content?.parts?.find((p: any) => p.functionCall)?.functionCall;
+
+          if (functionCall) {
+            const toolResult = await executeTool(functionCall.name, functionCall.args || {}, ctx);
+            contents.push(candidate.content);
+            contents.push({
+              role: "function",
+              parts: [
+                {
+                  functionResponse: {
+                    name: functionCall.name,
+                    response: { name: functionCall.name, content: toolResult },
+                  },
                 },
-              },
-            ],
-          });
+              ],
+            });
 
-          const secondRes = await fetch(geminiUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ contents }),
-          });
+            const secondRes = await fetch(geminiUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ contents }),
+            });
 
-          if (secondRes.ok) {
-            const secondData = (await secondRes.json()) as any;
-            const text = secondData?.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (text) {
-              res.json({
-                reply: text,
-                timestamp: new Date().toISOString(),
-                provider: "Google-Gemini-FunctionCalling",
-              });
-              return;
+            if (secondRes.ok) {
+              const secondData = (await secondRes.json()) as any;
+              const text = secondData?.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (text) {
+                finalReply = text;
+                provider = "Google-Gemini-FunctionCalling";
+              }
+            }
+
+            if (!finalReply) {
+              finalReply = `Here are the results for your request:\n\`\`\`json\n${JSON.stringify(toolResult, null, 2)}\n\`\`\``;
+              provider = "NBI-Tool-Executor";
+            }
+          } else {
+            const directText = candidate?.content?.parts?.[0]?.text;
+            if (directText) {
+              finalReply = directText;
+              provider = "Google-Gemini";
             }
           }
-
-          // If second call failed, return tool result cleanly formatted
-          res.json({
-            reply: `Here are the results for your request:\n\`\`\`json\n${JSON.stringify(toolResult, null, 2)}\n\`\`\``,
-            timestamp: new Date().toISOString(),
-            provider: "NBI-Tool-Executor",
-          });
-          return;
         }
-
-        const directText = candidate?.content?.parts?.[0]?.text;
-        if (directText) {
-          res.json({
-            reply: directText,
-            timestamp: new Date().toISOString(),
-            provider: "Google-Gemini",
-          });
-          return;
-        }
+      } catch (netErr) {
+        console.warn("External Gemini API call timed out or failed, using native NBI Tool Engine:", netErr);
       }
-    } catch (netErr) {
-      console.warn("External Gemini API call timed out or failed, using native NBI Tool Engine:", netErr);
     }
 
-    // Fallback Engine if Gemini API call fails or times out
-    const q = userPrompt.toLowerCase();
-    const isGreeting = q === "hi" || q === "hello" || q === "hey" || q.startsWith("hi ") || q.startsWith("hello ") || q.includes("what can you do") || q.includes("help");
+    // 5. Fallback Engine with Context Awareness if Gemini API is omitted or failed
+    if (!finalReply) {
+      const q = userPrompt.toLowerCase();
+      const isGreeting = q === "hi" || q === "hello" || q === "hey" || q.startsWith("hi ") || q.startsWith("hello ") || q.includes("what can you do") || q.includes("help");
 
-    let reply = "";
-
-    if (isGreeting) {
-      if (ctx.role === "admin") {
-        reply = `Hello **${ctx.name}**!\n\n` +
-          `Welcome to the NBI Administrator Assistant. I am here to help you manage and monitor institution-wide attendance operations.\n\n` +
-          `I can assist you with:\n` +
-          `- 📊 **Institution Attendance**: Overall attendance rates and session metrics\n` +
-          `- 📚 **Courses**: Course listings and assigned lecturers\n` +
-          `- 👨‍🏫 **Lecturers**: Faculty directory and course assignments\n` +
-          `- 🎓 **Students**: Enrolled student rosters and account statuses\n` +
-          `- 📈 **Attendance Reports & Trends**: Institution-wide attendance analytics\n\n` +
-          `How can I help you today?`;
-      } else if (ctx.role === "lecturer") {
-        reply = `Hello **${ctx.name}**!\n\n` +
-          `Welcome to the NBI Lecturer Assistant. I can help you manage your courses and track student attendance.\n\n` +
-          `You can ask me about:\n` +
-          `- 📚 **My Courses**: Assigned courses and enrolled students\n` +
-          `- ⏰ **Lectures & Schedule**: Session timetables and active QR windows\n` +
-          `- 👥 **Class Attendance**: Student attendance history for your courses\n\n` +
-          `How can I assist you today?`;
-      } else {
-        reply = `Hello **${ctx.name}**!\n\n` +
-          `Welcome to the NBI Student Assistant. I can help you keep track of your classes and attendance record.\n\n` +
-          `You can ask me about:\n` +
-          `- 📊 **My Attendance**: Overall attendance rate and check-in summary\n` +
-          `- 📅 **Class Timetable**: Upcoming lectures and session schedules\n` +
-          `- 📝 **My Courses**: Enrolled courses and lecturer details\n\n` +
-          `How can I help you today?`;
-      }
-    } else {
-      let toolData: any = {};
-      if (q.includes("profile") || q.includes("who am i") || q.includes("my account")) {
-        toolData = await executeTool("get_my_profile", {}, ctx);
-      } else if (q.includes("class") || q.includes("timetable") || q.includes("schedule") || q.includes("next")) {
-        toolData = await executeTool("get_my_schedule", {}, ctx);
-      } else if (q.includes("course") || q.includes("subject")) {
-        toolData = await executeTool("get_my_courses", {}, ctx);
-      } else if (q.includes("summary") || q.includes("institute") || q.includes("total students") || q.includes("overview") || q.includes("metric") || q.includes("trend")) {
+      if (isGreeting) {
         if (ctx.role === "admin") {
-          toolData = await executeTool("get_institution_attendance_summary", {}, ctx);
-        } else {
-          toolData = await executeTool("get_my_attendance", {}, ctx);
-        }
-      } else {
-        if (ctx.role === "admin") {
-          toolData = await executeTool("get_institution_attendance_summary", {}, ctx);
+          finalReply = `Hello **${ctx.name}**!\n\n` +
+            `Welcome to the NBI AI Assistant. I am here to help you manage and monitor institution-wide attendance operations.\n\n` +
+            `I can assist you with:\n` +
+            `- 📊 **Institution Attendance**: Overall attendance rates and session metrics\n` +
+            `- 📚 **Courses**: Course listings and assigned lecturers\n` +
+            `- 👨‍🏫 **Lecturers**: Faculty directory and course assignments\n` +
+            `- 🎓 **Students**: Enrolled student rosters and account statuses\n` +
+            `- 📈 **Attendance Reports & Trends**: Institution-wide attendance analytics\n\n` +
+            `How can I help you today?`;
         } else if (ctx.role === "lecturer") {
-          toolData = await executeTool("get_my_courses", {}, ctx);
+          finalReply = `Hello **${ctx.name}**!\n\n` +
+            `Welcome to the NBI AI Assistant. I can help you manage your courses and track student attendance.\n\n` +
+            `You can ask me about:\n` +
+            `- 📚 **My Courses**: Assigned courses and enrolled students\n` +
+            `- ⏰ **Lectures & Schedule**: Session timetables and active QR windows\n` +
+            `- 👥 **Class Attendance**: Student attendance history for your courses\n\n` +
+            `How can I assist you today?`;
         } else {
-          toolData = await executeTool("get_my_attendance", {}, ctx);
+          finalReply = `Hello **${ctx.name}**!\n\n` +
+            `Welcome to the NBI AI Assistant. I can help you keep track of your classes and attendance record.\n\n` +
+            `You can ask me about:\n` +
+            `- 📊 **My Attendance**: Overall attendance rate and check-in summary\n` +
+            `- 📅 **Class Timetable**: Upcoming lectures and session schedules\n` +
+            `- 📝 **My Courses**: Enrolled courses and lecturer details\n\n` +
+            `How can I help you today?`;
         }
-      }
+      } else if (q.includes("lowest") || q.includes("worst") || q.includes("lowest attendance") || q.includes("which course has the lowest")) {
+        // Multi-turn context resolution for student lowest course attendance
+        if (ctx.role === "student" && ctx.linkedId) {
+          const lowestRes = await pool.query(
+            `SELECT c.course_code, c.course_name,
+                    COUNT(*) FILTER (WHERE a.status = 'present') as present,
+                    COUNT(*) FILTER (WHERE a.status = 'late') as late,
+                    COUNT(*) FILTER (WHERE a.status = 'absent') as absent,
+                    COUNT(*) as total
+             FROM attendance a
+             JOIN sessions s ON a.session_id = s.id
+             JOIN courses c ON s.course_id = c.id
+             WHERE a.student_id = $1
+             GROUP BY c.course_code, c.course_name
+             ORDER BY (COUNT(*) FILTER (WHERE a.status = 'present' OR a.status = 'late')::float / NULLIF(COUNT(*), 0)) ASC
+             LIMIT 1`,
+            [ctx.linkedId]
+          );
 
-      reply = `Hello **${ctx.name}** (${ctx.role.toUpperCase()})!\n\n`;
-      if (toolData.error) {
-        reply += `⚠️ **Notice**: ${toolData.error}\n\nHow else can I assist with your attendance system tasks?`;
-      } else if (toolData.attendanceRate) {
-        reply += `Here is your current attendance summary:\n` +
-                 `- **Attendance Rate**: ${toolData.attendanceRate}\n` +
-                 `- **Present**: ${toolData.summary.present} sessions\n` +
-                 `- **Late**: ${toolData.summary.late} sessions\n` +
-                 `- **Absent**: ${toolData.summary.absent} sessions\n` +
-                 `- **Total Sessions**: ${toolData.summary.total}`;
-      } else if (toolData.courses) {
-        reply += `You have **${toolData.courses.length} courses** in the system:\n` +
-                 toolData.courses.map((c: any) => `- **${c.code}**: ${c.title}`).join("\n");
-      } else if (toolData.schedule) {
-        if (toolData.schedule.length === 0) {
-          reply += `You have no upcoming sessions scheduled at this time.`;
+          if (lowestRes.rows.length > 0) {
+            const row = lowestRes.rows[0];
+            const total = Number(row.total || 0);
+            const attended = Number(row.present || 0) + Number(row.late || 0);
+            const pct = total > 0 ? Math.round((attended / total) * 100) : 0;
+            finalReply = `Your lowest course attendance is **${row.course_code} - ${row.course_name}** at **${pct}%** (${attended}/${total} sessions attended).`;
+          } else {
+            finalReply = `You currently have no course attendance records recorded.`;
+          }
+        } else if (ctx.role === "lecturer" && ctx.linkedId) {
+          finalReply = `To view lowest student attendance for a course, specify the course code or ID (e.g., "Show attendance for CS101").`;
         } else {
-          reply += `Your upcoming schedule:\n` +
-                   toolData.schedule.map((s: any) => `- **${s.code} - ${s.title}**: ${s.session_date.toString().slice(0, 10)} (${s.start_time} - ${s.end_time})`).join("\n");
+          finalReply = `As an Administrator, you can view course reports or low attendance alerts from the Reports & Insights dashboard.`;
         }
-      } else if (toolData.institutionSummary) {
-        const s = toolData.institutionSummary;
-        reply += `**NBI Institute Overview**:\n` +
-                 `- **Registered Students**: ${s.total_students}\n` +
-                 `- **Lecturers**: ${s.total_lecturers}\n` +
-                 `- **Courses**: ${s.total_courses}\n` +
-                 `- **Sessions Recorded**: ${s.total_sessions}\n` +
-                 `- **Accounts Pending Activation**: ${s.pending_activations}`;
       } else {
-        reply += `I am your NBI Smart Attendance AI Assistant. You can ask me about your schedule, attendance, assigned courses, or overall system metrics.`;
+        let toolData: any = {};
+        if (q.includes("profile") || q.includes("who am i") || q.includes("my account")) {
+          toolData = await executeTool("get_my_profile", {}, ctx);
+        } else if (q.includes("class") || q.includes("timetable") || q.includes("schedule") || q.includes("next")) {
+          toolData = await executeTool("get_my_schedule", {}, ctx);
+        } else if (q.includes("course") || q.includes("subject")) {
+          toolData = await executeTool("get_my_courses", {}, ctx);
+        } else if (q.includes("summary") || q.includes("institute") || q.includes("total students") || q.includes("overview") || q.includes("metric") || q.includes("trend")) {
+          if (ctx.role === "admin") {
+            toolData = await executeTool("get_institution_attendance_summary", {}, ctx);
+          } else {
+            toolData = await executeTool("get_my_attendance", {}, ctx);
+          }
+        } else {
+          if (ctx.role === "admin") {
+            toolData = await executeTool("get_institution_attendance_summary", {}, ctx);
+          } else if (ctx.role === "lecturer") {
+            toolData = await executeTool("get_my_courses", {}, ctx);
+          } else {
+            toolData = await executeTool("get_my_attendance", {}, ctx);
+          }
+        }
+
+        finalReply = `Hello **${ctx.name}** (${ctx.role.toUpperCase()})!\n\n`;
+        if (toolData.error) {
+          finalReply += `⚠️ **Notice**: ${toolData.error}\n\nHow else can I assist with your attendance system tasks?`;
+        } else if (toolData.attendanceRate) {
+          finalReply += `Here is your current attendance summary:\n` +
+                   `- **Attendance Rate**: ${toolData.attendanceRate}\n` +
+                   `- **Present**: ${toolData.summary.present} sessions\n` +
+                   `- **Late**: ${toolData.summary.late} sessions\n` +
+                   `- **Absent**: ${toolData.summary.absent} sessions\n` +
+                   `- **Total Sessions**: ${toolData.summary.total}`;
+        } else if (toolData.courses) {
+          finalReply += `You have **${toolData.courses.length} courses** in the system:\n` +
+                   toolData.courses.map((c: any) => `- **${c.code}**: ${c.title}`).join("\n");
+        } else if (toolData.schedule) {
+          if (toolData.schedule.length === 0) {
+            finalReply += `You have no upcoming sessions scheduled at this time.`;
+          } else {
+            finalReply += `Your upcoming schedule:\n` +
+                     toolData.schedule.map((s: any) => `- **${s.code} - ${s.title}**: ${s.session_date.toString().slice(0, 10)} (${s.start_time} - ${s.end_time})`).join("\n");
+          }
+        } else if (toolData.institutionSummary) {
+          const s = toolData.institutionSummary;
+          finalReply += `**NBI Institute Overview**:\n` +
+                   `- **Registered Students**: ${s.total_students}\n` +
+                   `- **Lecturers**: ${s.total_lecturers}\n` +
+                   `- **Courses**: ${s.total_courses}\n` +
+                   `- **Sessions Recorded**: ${s.total_sessions}\n` +
+                   `- **Accounts Pending Activation**: ${s.pending_activations}`;
+        } else {
+          finalReply += `I am your NBI AI Assistant. You can ask me about your schedule, attendance, assigned courses, or overall system metrics.`;
+        }
       }
     }
+
+    // Save generated assistant response to database
+    await pool.query(
+      "INSERT INTO chat_messages (user_id, role, content, created_at) VALUES ($1, 'assistant', $2, NOW())",
+      [ctx.userId, finalReply]
+    );
 
     res.json({
-      reply,
+      reply: finalReply,
       timestamp: new Date().toISOString(),
-      provider: "NBI-Role-Tool-Engine",
+      provider,
     });
 
   } catch (error: any) {
@@ -659,4 +736,3 @@ CRITICAL SECURITY & BEHAVIORAL RULES:
     res.status(500).json({ message: "Failed to process assistant request." });
   }
 }
-

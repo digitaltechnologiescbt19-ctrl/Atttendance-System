@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 
 export interface ChatMessageItem {
-  id?: string;
+  id?: string | number;
   role: "user" | "assistant";
   content: string;
   timestamp?: string;
@@ -32,9 +32,9 @@ export default function ChatArea({
   const defaultPrompts =
     roleName.toLowerCase() === "student"
       ? [
-          "When is my next class?",
           "What is my overall attendance percentage?",
-          "Show my attendance summary",
+          "What is my lowest course attendance?",
+          "When is my next class?",
           "What courses am I currently taking?",
         ]
       : roleName.toLowerCase() === "lecturer"
@@ -55,11 +55,10 @@ export default function ChatArea({
     <div style={{
       flex: 1,
       overflowY: "auto",
-      padding: "1.25rem var(--sp-6)",
+      padding: "1rem var(--sp-4)",
       display: "flex",
       flexDirection: "column",
       gap: "1rem",
-      background: "var(--bg-app)",
     }}>
       {messages.length === 0 ? (
         <div style={{
@@ -75,12 +74,12 @@ export default function ChatArea({
             Welcome, {userName}
           </h2>
           <p style={{ fontSize: "var(--tx-sm)", color: "var(--text-secondary)", maxWidth: 520, lineHeight: 1.5, marginBottom: "1.5rem" }}>
-            Select a common topic below or type your question in the search box to begin.
+            Select a common topic below or type your question in the box to begin.
           </p>
 
           <div style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
+            gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
             gap: "0.75rem",
             maxWidth: 640,
             width: "100%",
