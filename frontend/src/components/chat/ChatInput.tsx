@@ -1,5 +1,4 @@
 import React, { useState } from "react";
-import { HiOutlinePaperAirplane } from "react-icons/hi2";
 
 interface ChatInputProps {
   onSend: (message: string) => void;
@@ -10,7 +9,7 @@ interface ChatInputProps {
 export default function ChatInput({
   onSend,
   disabled = false,
-  placeholder = "Ask about your timetable, attendance percentage, courses...",
+  placeholder = "Ask a question...",
 }: ChatInputProps) {
   const [message, setMessage] = useState("");
 
@@ -30,8 +29,8 @@ export default function ChatInput({
   return (
     <div style={{
       background: "var(--bg-surface)",
-      borderTop: "1px solid var(--border-subtle)",
-      padding: "1rem var(--sp-6)",
+      borderTop: "1px solid var(--border-default)",
+      padding: "0.85rem var(--sp-6)",
     }}>
       <div style={{
         display: "flex",
@@ -39,9 +38,8 @@ export default function ChatInput({
         gap: "0.75rem",
         background: "var(--bg-input)",
         border: "1px solid var(--border-default)",
-        borderRadius: "var(--radius-lg)",
-        padding: "0.5rem 0.75rem",
-        boxShadow: "var(--shadow-sm)",
+        borderRadius: "var(--radius-md)",
+        padding: "0.4rem 0.5rem 0.4rem 0.85rem",
       }}>
         <textarea
           rows={1}
@@ -66,23 +64,17 @@ export default function ChatInput({
           type="button"
           onClick={handleSend}
           disabled={disabled || !message.trim()}
-          aria-label="Send message"
+          className="btn-primary"
           style={{
-            width: 40,
-            height: 40,
+            padding: "0.45rem 1rem",
+            fontSize: "var(--tx-sm)",
+            fontWeight: 500,
             borderRadius: "var(--radius-md)",
-            background: message.trim() && !disabled ? "var(--accent)" : "var(--border-subtle)",
-            color: message.trim() && !disabled ? "#ffffff" : "var(--text-muted)",
-            border: "none",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
             cursor: message.trim() && !disabled ? "pointer" : "not-allowed",
-            transition: "all var(--t-fast)",
-            flexShrink: 0,
+            opacity: message.trim() && !disabled ? 1 : 0.6,
           }}
         >
-          <HiOutlinePaperAirplane style={{ fontSize: "1.2rem", transform: "rotate(90deg)" }} />
+          Send
         </button>
       </div>
     </div>

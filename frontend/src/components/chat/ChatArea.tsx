@@ -1,5 +1,4 @@
 import { useEffect, useRef } from "react";
-import { HiOutlineSparkles, HiOutlineUser, HiOutlineClock } from "react-icons/hi2";
 import ReactMarkdown from "react-markdown";
 
 export interface ChatMessageItem {
@@ -33,33 +32,33 @@ export default function ChatArea({
   const defaultPrompts =
     roleName.toLowerCase() === "student"
       ? [
-          "📅 When is my next class?",
-          "📊 What is my overall attendance percentage?",
-          "📝 Show my attendance summary",
-          "❓ Did I attend today's lecture?",
+          "When is my next class?",
+          "What is my overall attendance percentage?",
+          "Show my attendance summary",
+          "What courses am I currently taking?",
         ]
       : roleName.toLowerCase() === "lecturer"
       ? [
-          "👥 How many students attended my class today?",
-          "⚠️ Which students have low attendance?",
-          "📚 Summarize attendance for my courses",
-          "⏰ When is my next lecture?",
+          "What courses do I teach?",
+          "Which students attended my class today?",
+          "Summarize attendance for my courses",
+          "When is my next lecture?",
         ]
       : [
-          "🎓 How many total students are registered?",
-          "📈 Show overall institute attendance stats",
-          "🔒 How many accounts are pending activation?",
-          "🏢 Summarize today's attendance across institute",
+          "Give me an institution attendance summary",
+          "How many total students and lecturers are registered?",
+          "Show course enrollment statistics across the institution",
+          "How many user accounts are pending activation?",
         ];
 
   return (
     <div style={{
       flex: 1,
       overflowY: "auto",
-      padding: "1.5rem var(--sp-6)",
+      padding: "1.25rem var(--sp-6)",
       display: "flex",
       flexDirection: "column",
-      gap: "1.25rem",
+      gap: "1rem",
       background: "var(--bg-app)",
     }}>
       {messages.length === 0 ? (
@@ -68,37 +67,20 @@ export default function ChatArea({
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-          minHeight: "360px",
+          padding: "2rem var(--sp-4)",
           textAlign: "center",
           margin: "auto 0",
         }}>
-          <div style={{
-            width: 64,
-            height: 64,
-            borderRadius: "var(--radius-xl)",
-            background: "var(--accent-subtle)",
-            border: "1px solid var(--accent-border)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "var(--accent)",
-            fontSize: "2rem",
-            marginBottom: "1.25rem",
-            boxShadow: "var(--shadow-md)",
-          }}>
-            <HiOutlineSparkles />
-          </div>
-
-          <h2 style={{ fontSize: "var(--tx-xl)", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.5rem" }}>
-            Welcome, {userName}!
+          <h2 style={{ fontSize: "var(--tx-lg)", fontWeight: 600, color: "var(--text-primary)", marginBottom: "0.35rem" }}>
+            Welcome, {userName}
           </h2>
-          <p style={{ fontSize: "var(--tx-sm)", color: "var(--text-secondary)", maxWidth: 480, lineHeight: 1.6, marginBottom: "1.75rem" }}>
-            I am your NBI Smart Attendance AI Assistant ({roleName} Mode). Ask me about timetables, attendance stats, course check-ins, or institute metrics.
+          <p style={{ fontSize: "var(--tx-sm)", color: "var(--text-secondary)", maxWidth: 520, lineHeight: 1.5, marginBottom: "1.5rem" }}>
+            Select a common topic below or type your question in the search box to begin.
           </p>
 
           <div style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+            gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
             gap: "0.75rem",
             maxWidth: 640,
             width: "100%",
@@ -107,37 +89,28 @@ export default function ChatArea({
               <button
                 key={idx}
                 type="button"
-                onClick={() => onSelectPrompt?.(prompt.replace(/^[\uD800-\uDBFF\uDC00-\uDFFF\u2600-\u27BF]\s*/, ""))}
+                onClick={() => onSelectPrompt?.(prompt)}
+                className="btn-secondary"
                 style={{
-                  background: "var(--bg-surface)",
-                  border: "1px solid var(--border-default)",
-                  borderRadius: "var(--radius-md)",
-                  padding: "0.85rem 1rem",
-                  color: "var(--text-primary)",
+                  padding: "0.75rem 1rem",
                   fontSize: "var(--tx-sm)",
+                  fontWeight: 500,
+                  color: "var(--text-primary)",
                   textAlign: "left",
+                  borderRadius: "var(--radius-md)",
+                  border: "1px solid var(--border-default)",
+                  background: "var(--bg-surface)",
                   cursor: "pointer",
-                  transition: "all var(--t-fast)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = "var(--accent)";
-                  e.currentTarget.style.transform = "translateY(-1px)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.borderColor = "var(--border-default)";
-                  e.currentTarget.style.transform = "none";
+                  transition: "border-color var(--t-fast)",
                 }}
               >
-                <span>{prompt}</span>
+                {prompt}
               </button>
             ))}
           </div>
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem", maxWidth: 900, width: "100%", margin: "0 auto" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "1rem", maxWidth: 960, width: "100%", margin: "0 auto" }}>
           {messages.map((msg, index) => {
             const isUser = msg.role === "user";
             return (
@@ -145,40 +118,20 @@ export default function ChatArea({
                 key={index}
                 style={{
                   display: "flex",
-                  gap: "0.75rem",
-                  flexDirection: isUser ? "row-reverse" : "row",
-                  alignItems: "flex-start",
+                  flexDirection: "column",
+                  alignItems: isUser ? "flex-end" : "flex-start",
+                  width: "100%",
                 }}
               >
-                {/* Avatar */}
                 <div style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: "var(--radius-md)",
-                  background: isUser ? "var(--accent)" : "var(--bg-surface-raised)",
-                  border: isUser ? "none" : "1px solid var(--border-default)",
-                  color: isUser ? "#ffffff" : "var(--accent)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "1.1rem",
-                  flexShrink: 0,
-                  boxShadow: "var(--shadow-sm)",
-                }}>
-                  {isUser ? <HiOutlineUser /> : <HiOutlineSparkles />}
-                </div>
-
-                {/* Bubble */}
-                <div style={{
-                  maxWidth: "75%",
+                  maxWidth: "85%",
                   background: isUser ? "var(--accent)" : "var(--bg-surface)",
                   color: isUser ? "#ffffff" : "var(--text-primary)",
-                  border: isUser ? "none" : "1px solid var(--border-subtle)",
-                  borderRadius: isUser ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
-                  padding: "0.85rem 1.15rem",
+                  border: isUser ? "none" : "1px solid var(--border-default)",
+                  borderRadius: isUser ? "12px 12px 2px 12px" : "12px 12px 12px 2px",
+                  padding: "0.75rem 1rem",
                   fontSize: "var(--tx-base)",
                   lineHeight: 1.6,
-                  boxShadow: "var(--shadow-sm)",
                 }}>
                   {isUser ? (
                     <div style={{ whiteSpace: "pre-wrap" }}>{msg.content}</div>
@@ -190,14 +143,10 @@ export default function ChatArea({
                   {msg.timestamp && (
                     <div style={{
                       fontSize: "var(--tx-xs)",
-                      color: isUser ? "rgba(255,255,255,0.7)" : "var(--text-muted)",
-                      marginTop: "0.4rem",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "0.25rem",
-                      justifyContent: isUser ? "flex-end" : "flex-start",
+                      color: isUser ? "rgba(255, 255, 255, 0.75)" : "var(--text-muted)",
+                      marginTop: "0.35rem",
+                      textAlign: isUser ? "right" : "left",
                     }}>
-                      <HiOutlineClock style={{ fontSize: "0.75rem" }} />
                       {new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                     </div>
                   )}
@@ -207,34 +156,16 @@ export default function ChatArea({
           })}
 
           {loading && (
-            <div style={{ display: "flex", gap: "0.75rem", alignItems: "flex-start" }}>
-              <div style={{
-                width: 36,
-                height: 36,
-                borderRadius: "var(--radius-md)",
-                background: "var(--bg-surface-raised)",
-                border: "1px solid var(--border-default)",
-                color: "var(--accent)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: "1.1rem",
-                flexShrink: 0,
-              }}>
-                <HiOutlineSparkles />
-              </div>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
               <div style={{
                 background: "var(--bg-surface)",
-                border: "1px solid var(--border-subtle)",
-                borderRadius: "16px 16px 16px 4px",
-                padding: "0.85rem 1.15rem",
+                border: "1px solid var(--border-default)",
+                borderRadius: "12px 12px 12px 2px",
+                padding: "0.75rem 1rem",
                 color: "var(--text-secondary)",
                 fontSize: "var(--tx-sm)",
-                display: "flex",
-                alignItems: "center",
-                gap: "0.5rem",
               }}>
-                <span className="typing-dots">NBI AI is analyzing system data...</span>
+                Loading response...
               </div>
             </div>
           )}

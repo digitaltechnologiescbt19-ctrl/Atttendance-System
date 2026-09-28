@@ -465,9 +465,13 @@ export async function handleChatMessage(req: AuthRequest, res: Response): Promis
 The authenticated user is: Name: "${ctx.name}", Email: "${ctx.email}", Role: "${ctx.role.toUpperCase()}", Linked ID: ${ctx.linkedId}.
 
 CRITICAL SECURITY & BEHAVIORAL RULES:
-1. Always call backend tools (e.g. get_my_attendance, get_my_courses, get_my_schedule, get_institution_attendance_summary, get_course_attendance) to fetch data before answering questions about schedules, attendance, courses, or student records.
-2. Server-side authorization rules will evaluate tool requests. If a tool returns an "Access Denied" error message, respect the restriction strictly and explain to the user politely that they are not authorized for that data.
-3. Respond in clean, formatted Markdown with bullet points or bold titles.`;
+1. When the user provides a greeting (e.g., "Hi", "Hello", "Hey") or a general inquiry about what you can do:
+   - For ADMIN users: Greet them warmly as an Administrator and explain that you can assist with institution attendance summaries, course registrations, lecturer profiles, student rosters, attendance reports, and attendance trends. Do NOT attempt to fetch personal student attendance records or state access denied.
+   - For LECTURER users: Greet them as a Lecturer and explain that you can assist with their assigned courses, class session schedules, student attendance, and course reports.
+   - For STUDENT users: Greet them as a Student and explain that you can assist with their personal attendance rate, class schedules, and course check-in history.
+2. For specific data queries, call backend tools (e.g. get_my_attendance, get_my_courses, get_my_schedule, get_institution_attendance_summary, get_course_attendance) to fetch data before answering questions about schedules, attendance, courses, or student records.
+3. Server-side authorization rules will evaluate tool requests. If a tool returns an "Access Denied" error message, respect the restriction strictly and explain to the user politely that they are not authorized for that data.
+4. Respond in clean, formatted Markdown with bullet points or bold titles.`;
 
     const contents: any[] = [
       {
@@ -555,53 +559,93 @@ CRITICAL SECURITY & BEHAVIORAL RULES:
 
     // Fallback Engine if Gemini API call fails or times out
     const q = userPrompt.toLowerCase();
-    let toolData: any = {};
-    if (q.includes("profile") || q.includes("who am i") || q.includes("my account")) {
-      toolData = await executeTool("get_my_profile", {}, ctx);
-    } else if (q.includes("class") || q.includes("timetable") || q.includes("schedule") || q.includes("next")) {
-      toolData = await executeTool("get_my_schedule", {}, ctx);
-    } else if (q.includes("course") || q.includes("subject")) {
-      toolData = await executeTool("get_my_courses", {}, ctx);
-    } else if (q.includes("summary") || q.includes("institute") || q.includes("total students")) {
-      if (ctx.role === "admin") {
-        toolData = await executeTool("get_institution_attendance_summary", {}, ctx);
-      } else {
-        toolData = await executeTool("get_my_attendance", {}, ctx);
-      }
-    } else {
-      toolData = await executeTool("get_my_attendance", {}, ctx);
-    }
+    const isGreeting = q === "hi" || q === "hello" || q === "hey" || q.startsWith("hi ") || q.startsWith("hello ") || q.includes("what can you do") || q.includes("help");
 
-    let reply = `Hello **${ctx.name}** (${ctx.role.toUpperCase()})!\n\n`;
-    if (toolData.error) {
-      reply += `⚠️ **Notice**: ${toolData.error}\n\nHow else can I assist with your attendance system tasks?`;
-    } else if (toolData.attendanceRate) {
-      reply += `Here is your current attendance summary:\n` +
-               `- **Attendance Rate**: ${toolData.attendanceRate}\n` +
-               `- **Present**: ${toolData.summary.present} sessions\n` +
-               `- **Late**: ${toolData.summary.late} sessions\n` +
-               `- **Absent**: ${toolData.summary.absent} sessions\n` +
-               `- **Total Sessions**: ${toolData.summary.total}`;
-    } else if (toolData.courses) {
-      reply += `You have **${toolData.courses.length} courses** in the system:\n` +
-               toolData.courses.map((c: any) => `- **${c.code}**: ${c.title}`).join("\n");
-    } else if (toolData.schedule) {
-      if (toolData.schedule.length === 0) {
-        reply += `You have no upcoming sessions scheduled at this time.`;
+    let reply = "";
+
+    if (isGreeting) {
+      if (ctx.role === "admin") {
+        reply = `Hello **${ctx.name}**!\n\n` +
+          `Welcome to the NBI Administrator Assistant. I am here to help you manage and monitor institution-wide attendance operations.\n\n` +
+          `I can assist you with:\n` +
+          `- 📊 **Institution Attendance**: Overall attendance rates and session metrics\n` +
+          `- 📚 **Courses**: Course listings and assigned lecturers\n` +
+          `- 👨‍🏫 **Lecturers**: Faculty directory and course assignments\n` +
+          `- 🎓 **Students**: Enrolled student rosters and account statuses\n` +
+          `- 📈 **Attendance Reports & Trends**: Institution-wide attendance analytics\n\n` +
+          `How can I help you today?`;
+      } else if (ctx.role === "lecturer") {
+        reply = `Hello **${ctx.name}**!\n\n` +
+          `Welcome to the NBI Lecturer Assistant. I can help you manage your courses and track student attendance.\n\n` +
+          `You can ask me about:\n` +
+          `- 📚 **My Courses**: Assigned courses and enrolled students\n` +
+          `- ⏰ **Lectures & Schedule**: Session timetables and active QR windows\n` +
+          `- 👥 **Class Attendance**: Student attendance history for your courses\n\n` +
+          `How can I assist you today?`;
       } else {
-        reply += `Your upcoming schedule:\n` +
-                 toolData.schedule.map((s: any) => `- **${s.code} - ${s.title}**: ${s.session_date.toString().slice(0, 10)} (${s.start_time} - ${s.end_time})`).join("\n");
+        reply = `Hello **${ctx.name}**!\n\n` +
+          `Welcome to the NBI Student Assistant. I can help you keep track of your classes and attendance record.\n\n` +
+          `You can ask me about:\n` +
+          `- 📊 **My Attendance**: Overall attendance rate and check-in summary\n` +
+          `- 📅 **Class Timetable**: Upcoming lectures and session schedules\n` +
+          `- 📝 **My Courses**: Enrolled courses and lecturer details\n\n` +
+          `How can I help you today?`;
       }
-    } else if (toolData.institutionSummary) {
-      const s = toolData.institutionSummary;
-      reply += `**NBI Institute Overview**:\n` +
-               `- **Registered Students**: ${s.total_students}\n` +
-               `- **Lecturers**: ${s.total_lecturers}\n` +
-               `- **Courses**: ${s.total_courses}\n` +
-               `- **Sessions Recorded**: ${s.total_sessions}\n` +
-               `- **Accounts Pending Activation**: ${s.pending_activations}`;
     } else {
-      reply += `I am your NBI Smart Attendance AI Assistant. You can ask me about your schedule, attendance rate, assigned courses, or overall system metrics.`;
+      let toolData: any = {};
+      if (q.includes("profile") || q.includes("who am i") || q.includes("my account")) {
+        toolData = await executeTool("get_my_profile", {}, ctx);
+      } else if (q.includes("class") || q.includes("timetable") || q.includes("schedule") || q.includes("next")) {
+        toolData = await executeTool("get_my_schedule", {}, ctx);
+      } else if (q.includes("course") || q.includes("subject")) {
+        toolData = await executeTool("get_my_courses", {}, ctx);
+      } else if (q.includes("summary") || q.includes("institute") || q.includes("total students") || q.includes("overview") || q.includes("metric") || q.includes("trend")) {
+        if (ctx.role === "admin") {
+          toolData = await executeTool("get_institution_attendance_summary", {}, ctx);
+        } else {
+          toolData = await executeTool("get_my_attendance", {}, ctx);
+        }
+      } else {
+        if (ctx.role === "admin") {
+          toolData = await executeTool("get_institution_attendance_summary", {}, ctx);
+        } else if (ctx.role === "lecturer") {
+          toolData = await executeTool("get_my_courses", {}, ctx);
+        } else {
+          toolData = await executeTool("get_my_attendance", {}, ctx);
+        }
+      }
+
+      reply = `Hello **${ctx.name}** (${ctx.role.toUpperCase()})!\n\n`;
+      if (toolData.error) {
+        reply += `⚠️ **Notice**: ${toolData.error}\n\nHow else can I assist with your attendance system tasks?`;
+      } else if (toolData.attendanceRate) {
+        reply += `Here is your current attendance summary:\n` +
+                 `- **Attendance Rate**: ${toolData.attendanceRate}\n` +
+                 `- **Present**: ${toolData.summary.present} sessions\n` +
+                 `- **Late**: ${toolData.summary.late} sessions\n` +
+                 `- **Absent**: ${toolData.summary.absent} sessions\n` +
+                 `- **Total Sessions**: ${toolData.summary.total}`;
+      } else if (toolData.courses) {
+        reply += `You have **${toolData.courses.length} courses** in the system:\n` +
+                 toolData.courses.map((c: any) => `- **${c.code}**: ${c.title}`).join("\n");
+      } else if (toolData.schedule) {
+        if (toolData.schedule.length === 0) {
+          reply += `You have no upcoming sessions scheduled at this time.`;
+        } else {
+          reply += `Your upcoming schedule:\n` +
+                   toolData.schedule.map((s: any) => `- **${s.code} - ${s.title}**: ${s.session_date.toString().slice(0, 10)} (${s.start_time} - ${s.end_time})`).join("\n");
+        }
+      } else if (toolData.institutionSummary) {
+        const s = toolData.institutionSummary;
+        reply += `**NBI Institute Overview**:\n` +
+                 `- **Registered Students**: ${s.total_students}\n` +
+                 `- **Lecturers**: ${s.total_lecturers}\n` +
+                 `- **Courses**: ${s.total_courses}\n` +
+                 `- **Sessions Recorded**: ${s.total_sessions}\n` +
+                 `- **Accounts Pending Activation**: ${s.pending_activations}`;
+      } else {
+        reply += `I am your NBI Smart Attendance AI Assistant. You can ask me about your schedule, attendance, assigned courses, or overall system metrics.`;
+      }
     }
 
     res.json({

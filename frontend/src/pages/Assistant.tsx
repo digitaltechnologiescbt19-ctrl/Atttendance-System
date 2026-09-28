@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { HiOutlineSparkles, HiOutlineTrash } from "react-icons/hi2";
+import { HiOutlineTrash } from "react-icons/hi2";
 import { useAuth } from "../context/AuthContext";
 import ChatArea, { type ChatMessageItem } from "../components/chat/ChatArea";
 import ChatInput from "../components/chat/ChatInput";
@@ -50,30 +50,14 @@ export default function Assistant() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - var(--topbar-h) - var(--sp-8) * 2)" }}>
-      {/* Header */}
+      {/* Page Header */}
       <div className="page-header" style={{ marginBottom: "1rem" }}>
         <div className="page-header-left">
-          <span className="page-eyebrow">NBI Native AI</span>
           <h1 className="page-title">AI Assistant</h1>
-          <p className="page-desc">Role-aware academic & attendance intelligence for students, lecturers, and administrators.</p>
+          <p className="page-desc">Role-aware academic & attendance intelligence.</p>
         </div>
 
         <div className="page-header-actions" style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-          <span style={{
-            background: "var(--accent-subtle)",
-            color: "var(--accent)",
-            border: "1px solid var(--accent-border)",
-            borderRadius: "var(--radius-full)",
-            padding: "4px 12px",
-            fontSize: "var(--tx-xs)",
-            fontWeight: 700,
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "0.35rem",
-          }}>
-            <HiOutlineSparkles /> {roleTitle} Mode
-          </span>
-
           {messages.length > 0 && (
             <button
               type="button"
@@ -86,9 +70,6 @@ export default function Assistant() {
                 padding: "6px 14px",
                 fontSize: "var(--tx-xs)",
                 borderRadius: "var(--radius-md)",
-                background: "var(--bg-surface)",
-                border: "1px solid var(--border-default)",
-                color: "var(--text-secondary)",
                 cursor: "pointer",
               }}
             >
@@ -98,14 +79,14 @@ export default function Assistant() {
         </div>
       </div>
 
-      {/* Main Chat Area Card */}
+      {/* Main Chat Container */}
       <div className="card" style={{
         flex: 1,
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
+        padding: 0,
         borderRadius: "var(--radius-lg)",
-        boxShadow: "var(--shadow-md)",
       }}>
         <ChatArea
           messages={messages}
@@ -117,7 +98,7 @@ export default function Assistant() {
         <ChatInput
           onSend={handleSend}
           disabled={loading}
-          placeholder={`Ask about your ${user?.role === "student" ? "classes, attendance rate, check-in history" : user?.role === "lecturer" ? "lectures, course check-ins, student attendance" : "institute attendance trends, courses, student metrics"}...`}
+          placeholder={`Ask about ${user?.role === "student" ? "classes, attendance rate, or schedule" : user?.role === "lecturer" ? "lectures, course check-ins, or student attendance" : "institution attendance trends, courses, or student metrics"}...`}
         />
       </div>
     </div>
