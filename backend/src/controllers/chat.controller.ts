@@ -528,35 +528,343 @@ async function toolGetLecturers(ctx: UserContext) {
   return { totalLecturers: res.rows.length, lecturers: res.rows };
 }
 
-async function executeTool(name: string, args: Record<string, any>, ctx: UserContext) {
-  switch (name) {
-    case "get_my_profile":
-      return await toolGetMyProfile(ctx);
-    case "get_my_courses":
-      return await toolGetMyCourses(ctx);
-    case "get_my_attendance":
-      return await toolGetMyAttendance(ctx);
-    case "get_my_schedule":
-      return await toolGetMySchedule(ctx);
-    case "get_course_attendance":
-      return await toolGetCourseAttendance(ctx, Number(args.course_id || 0));
-    case "get_course_students":
-      return await toolGetCourseStudents(ctx, Number(args.course_id || 0));
-    case "get_institution_attendance_summary":
-      return await toolGetInstitutionSummary(ctx);
-    case "get_students":
-      return await toolGetStudents(ctx);
-    case "get_lecturers":
-      return await toolGetLecturers(ctx);
-    case "create_attendance_session":
-      return await toolCreateAttendanceSession(ctx, args);
-    case "close_attendance_session":
-      return await toolCloseAttendanceSession(ctx, args);
-    case "create_course":
-      return await toolCreateCourse(ctx, args);
-    default:
-      return { error: `Unknown tool '${name}'` };
+async function toolReopenAttendanceSession(ctx: UserContext, args: Record<string, any>) {
+  if (ctx.role !== "lecturer" && ctx.role !== "admin") {
+    return { error: "Access Denied: Only Lecturers and Admins can reopen attendance sessions." };
   }
+  const sessionId = Number(args.session_id);
+  if (!sessionId) return { error: "session_id is required." };
+
+  if (ctx.role === "lecturer") {
+    const check = await pool.query(
+      "SELECT s.id FROM sessions s JOIN courses c ON s.course_id = c.id WHERE s.id = $1 AND c.lecturer_id = $2",
+      [sessionId, ctx.linkedId]
+    );
+    if (check.rows.length === 0) {
+      return { error: "Access Denied: You are not authorized to modify this session." };
+    }
+  }
+
+  const extendMinutes = Number(args.extend_minutes || 30);
+  const now = new Date();
+  const endTimeStr = new Date(now.getTime() + extendMinutes * 60000).toTimeString().slice(0, 5);
+
+  const res = await pool.query(
+    `UPDATE sessions 
+     SET is_active = TRUE, end_time = $2, session_date = CURRENT_DATE 
+     WHERE id = $1 
+     RETURNING *`,
+    [sessionId, endTimeStr]
+  );
+
+  if (res.rows.length === 0) return { error: "Session not found." };
+  return {
+    success: true,
+    message: `Attendance Session #${sessionId} has been reopened until ${endTimeStr} (${extendMinutes} mins).`,
+    session: res.rows[0],
+  };
+}
+
+async function toolExtendAttendanceSession(ctx: UserContext, args: Record<string, any>) {
+  if (ctx.role !== "lecturer" && ctx.role !== "admin") {
+    return { error: "Access Denied: Only Lecturers and Admins can extend attendance sessions." };
+  }
+  const sessionId = Number(args.session_id);
+  if (!sessionId) return { error: "session_id is required." };
+
+  if (ctx.role === "lecturer") {
+    const check = await pool.query(
+      "SELECT s.id FROM sessions s JOIN courses c ON s.course_id = c.id WHERE s.id = $1 AND c.lecturer_id = $2",
+      [sessionId, ctx.linkedId]
+    );
+    if (check.rows.length === 0) {
+      return { error: "Access Denied: You are not authorized to modify this session." };
+    }
+  }
+
+  const extendMinutes = Number(args.extend_minutes || 30);
+  const now = new Date();
+  const endTimeStr = new Date(now.getTime() + extendMinutes * 60000).toTimeString().slice(0, 5);
+
+  const res = await pool.query(
+    `UPDATE sessions 
+     SET is_active = TRUE, end_time = $2 
+     WHERE id = $1 
+     RETURNING *`,
+    [sessionId, endTimeStr]
+  );
+
+  if (res.rows.length === 0) return { error: "Session not found." };
+  return {
+    success: true,
+    message: `Attendance Session #${sessionId} has been extended by ${extendMinutes} minutes (until ${endTimeStr}).`,
+    session: res.rows[0],
+  };
+}
+
+async function toolDiagnoseSessionIssue(ctx: UserContext, args: Record<string, any>) {
+  if (ctx.role !== "lecturer" && ctx.role !== "admin") {
+    return { error: "Access Denied: Session diagnosis is restricted to Lecturers and Admins." };
+  }
+
+  let sessionRes;
+  if (args.session_id) {
+    sessionRes = await pool.query(
+      `SELECT s.id, s.course_id, s.session_date, s.start_time, s.end_time, s.is_active, c.course_code, c.course_name
+       FROM sessions s
+       JOIN courses c ON s.course_id = c.id
+       WHERE s.id = $1`,
+      [Number(args.session_id)]
+    );
+  } else if (ctx.role === "lecturer" && ctx.linkedId) {
+    sessionRes = await pool.query(
+      `SELECT s.id, s.course_id, s.session_date, s.start_time, s.end_time, s.is_active, c.course_code, c.course_name
+       FROM sessions s
+       JOIN courses c ON s.course_id = c.id
+       WHERE c.lecturer_id = $1
+       ORDER BY s.id DESC LIMIT 1`,
+      [ctx.linkedId]
+    );
+  } else {
+    sessionRes = await pool.query(
+      `SELECT s.id, s.course_id, s.session_date, s.start_time, s.end_time, s.is_active, c.course_code, c.course_name
+       FROM sessions s
+       JOIN courses c ON s.course_id = c.id
+       ORDER BY s.id DESC LIMIT 1`
+    );
+  }
+
+  if (sessionRes.rows.length === 0) {
+    return {
+      issueFound: false,
+      diagnosis: "No active or recent attendance session was found for your assigned courses.",
+    };
+  }
+
+  const s = sessionRes.rows[0];
+  const now = new Date();
+  const currentTimeStr = now.toTimeString().slice(0, 5);
+
+  if (!s.is_active) {
+    return {
+      issueFound: true,
+      courseCode: s.course_code,
+      courseName: s.course_name,
+      sessionId: s.id,
+      issue: `Attendance session #${s.id} for ${s.course_code} (${s.course_name}) is currently closed (is_active = false).`,
+      recommendation: "Reopen the session for 30 minutes to allow student check-ins.",
+      proposedTool: "reopen_attendance_session",
+      proposedArgs: { session_id: s.id, extend_minutes: 30 },
+      proposedDescription: `Reopen Session #${s.id} (${s.course_code}) for 30 minutes`,
+    };
+  }
+
+  if (s.end_time && s.end_time < currentTimeStr) {
+    return {
+      issueFound: true,
+      courseCode: s.course_code,
+      courseName: s.course_name,
+      sessionId: s.id,
+      issue: `Attendance session #${s.id} for ${s.course_code} expired at ${s.end_time} (Current time: ${currentTimeStr}).`,
+      recommendation: "Extend the session window by 30 minutes.",
+      proposedTool: "extend_attendance_session",
+      proposedArgs: { session_id: s.id, extend_minutes: 30 },
+      proposedDescription: `Extend Session #${s.id} (${s.course_code}) by 30 minutes`,
+    };
+  }
+
+  return {
+    issueFound: false,
+    courseCode: s.course_code,
+    courseName: s.course_name,
+    sessionId: s.id,
+    diagnosis: `Session #${s.id} for ${s.course_code} is active and operating normally until ${s.end_time}.`,
+  };
+}
+
+async function toolDiagnoseSystemIssue(ctx: UserContext) {
+  if (ctx.role !== "admin") return { error: "Access Denied: Admin role required." };
+
+  const pendingUsers = await pool.query("SELECT COUNT(*) FROM users WHERE account_status = 'pending_activation'");
+  const coursesNoLec = await pool.query("SELECT COUNT(*) FROM courses WHERE lecturer_id IS NULL");
+  const unlinkedUsers = await pool.query("SELECT COUNT(*) FROM users WHERE linked_id IS NULL AND role != 'admin'");
+  const expiredToday = await pool.query("SELECT COUNT(*) FROM sessions WHERE session_date = CURRENT_DATE AND is_active = FALSE");
+
+  return {
+    systemHealth: "Operational",
+    pendingActivations: Number(pendingUsers.rows[0].count),
+    unassignedCourses: Number(coursesNoLec.rows[0].count),
+    unlinkedProfiles: Number(unlinkedUsers.rows[0].count),
+    closedSessionsToday: Number(expiredToday.rows[0].count),
+  };
+}
+
+export interface ToolMeta {
+  name: string;
+  description: string;
+  allowedRoles: Array<"admin" | "lecturer" | "student">;
+  readOnly: boolean;
+  sideEffect: boolean;
+  confirmationRequired: boolean;
+  execute: (ctx: UserContext, args: Record<string, any>) => Promise<any>;
+}
+
+export const AVAILABLE_TOOLS: Record<string, ToolMeta> = {
+  get_my_profile: {
+    name: "get_my_profile",
+    description: "Fetch current authenticated user profile details",
+    allowedRoles: ["student", "lecturer", "admin"],
+    readOnly: true,
+    sideEffect: false,
+    confirmationRequired: false,
+    execute: async (ctx) => toolGetMyProfile(ctx),
+  },
+  get_my_courses: {
+    name: "get_my_courses",
+    description: "Fetch courses linked to the authenticated user",
+    allowedRoles: ["student", "lecturer", "admin"],
+    readOnly: true,
+    sideEffect: false,
+    confirmationRequired: false,
+    execute: async (ctx) => toolGetMyCourses(ctx),
+  },
+  get_my_attendance: {
+    name: "get_my_attendance",
+    description: "Fetch personal student attendance records and percentage",
+    allowedRoles: ["student"],
+    readOnly: true,
+    sideEffect: false,
+    confirmationRequired: false,
+    execute: async (ctx) => toolGetMyAttendance(ctx),
+  },
+  get_my_schedule: {
+    name: "get_my_schedule",
+    description: "Fetch upcoming class and lecture schedule",
+    allowedRoles: ["student", "lecturer", "admin"],
+    readOnly: true,
+    sideEffect: false,
+    confirmationRequired: false,
+    execute: async (ctx) => toolGetMySchedule(ctx),
+  },
+  get_course_attendance: {
+    name: "get_course_attendance",
+    description: "Fetch course-wide attendance summary for authorized course",
+    allowedRoles: ["lecturer", "admin"],
+    readOnly: true,
+    sideEffect: false,
+    confirmationRequired: false,
+    execute: async (ctx, args) => toolGetCourseAttendance(ctx, Number(args.course_id || 0)),
+  },
+  get_course_students: {
+    name: "get_course_students",
+    description: "Fetch student roster for authorized course",
+    allowedRoles: ["lecturer", "admin"],
+    readOnly: true,
+    sideEffect: false,
+    confirmationRequired: false,
+    execute: async (ctx, args) => toolGetCourseStudents(ctx, Number(args.course_id || 0)),
+  },
+  get_institution_attendance_summary: {
+    name: "get_institution_attendance_summary",
+    description: "Fetch institution-wide metrics and stats for administrators",
+    allowedRoles: ["admin"],
+    readOnly: true,
+    sideEffect: false,
+    confirmationRequired: false,
+    execute: async (ctx) => toolGetInstitutionSummary(ctx),
+  },
+  get_students: {
+    name: "get_students",
+    description: "Fetch student directory for administrators",
+    allowedRoles: ["admin"],
+    readOnly: true,
+    sideEffect: false,
+    confirmationRequired: false,
+    execute: async (ctx) => toolGetStudents(ctx),
+  },
+  get_lecturers: {
+    name: "get_lecturers",
+    description: "Fetch lecturer directory for administrators",
+    allowedRoles: ["admin"],
+    readOnly: true,
+    sideEffect: false,
+    confirmationRequired: false,
+    execute: async (ctx) => toolGetLecturers(ctx),
+  },
+  create_attendance_session: {
+    name: "create_attendance_session",
+    description: "Create a new lecture attendance session",
+    allowedRoles: ["lecturer", "admin"],
+    readOnly: false,
+    sideEffect: true,
+    confirmationRequired: true,
+    execute: async (ctx, args) => toolCreateAttendanceSession(ctx, args),
+  },
+  close_attendance_session: {
+    name: "close_attendance_session",
+    description: "Close an active attendance session",
+    allowedRoles: ["lecturer", "admin"],
+    readOnly: false,
+    sideEffect: true,
+    confirmationRequired: true,
+    execute: async (ctx, args) => toolCloseAttendanceSession(ctx, args),
+  },
+  reopen_attendance_session: {
+    name: "reopen_attendance_session",
+    description: "Reopen a closed attendance session",
+    allowedRoles: ["lecturer", "admin"],
+    readOnly: false,
+    sideEffect: true,
+    confirmationRequired: true,
+    execute: async (ctx, args) => toolReopenAttendanceSession(ctx, args),
+  },
+  extend_attendance_session: {
+    name: "extend_attendance_session",
+    description: "Extend duration of an attendance session",
+    allowedRoles: ["lecturer", "admin"],
+    readOnly: false,
+    sideEffect: true,
+    confirmationRequired: true,
+    execute: async (ctx, args) => toolExtendAttendanceSession(ctx, args),
+  },
+  diagnose_session_issue: {
+    name: "diagnose_session_issue",
+    description: "Diagnose session status or scan acceptance issues",
+    allowedRoles: ["lecturer", "admin"],
+    readOnly: true,
+    sideEffect: false,
+    confirmationRequired: false,
+    execute: async (ctx, args) => toolDiagnoseSessionIssue(ctx, args),
+  },
+  diagnose_system_issue: {
+    name: "diagnose_system_issue",
+    description: "Diagnose overall system health and pending activations",
+    allowedRoles: ["admin"],
+    readOnly: true,
+    sideEffect: false,
+    confirmationRequired: false,
+    execute: async (ctx) => toolDiagnoseSystemIssue(ctx),
+  },
+  create_course: {
+    name: "create_course",
+    description: "Create a new course entry in the system",
+    allowedRoles: ["admin"],
+    readOnly: false,
+    sideEffect: true,
+    confirmationRequired: true,
+    execute: async (ctx, args) => toolCreateCourse(ctx, args),
+  },
+};
+
+async function executeTool(name: string, args: Record<string, any>, ctx: UserContext) {
+  const tool = AVAILABLE_TOOLS[name];
+  if (!tool) {
+    return { error: `Unknown tool '${name}'` };
+  }
+  if (!tool.allowedRoles.includes(ctx.role)) {
+    return { error: `Access Denied: Tool '${name}' is not authorized for your role (${ctx.role.toUpperCase()}).` };
+  }
+  return await tool.execute(ctx, args);
 }
 
 /* ------------------------------------------------------------------ */
@@ -587,11 +895,11 @@ export async function handleChatMessage(req: AuthRequest, res: Response): Promis
       if (toolResult.error) {
         replyText = `⚠️ **Action Execution Failed**: ${toolResult.error}`;
       } else if (toolResult.session) {
-        replyText = `✓ **Attendance Session Created Successfully!**\n` +
+        replyText = `✓ **Attendance Session Action Executed Successfully!**\n` +
           `- **Session ID**: #${toolResult.session.id}\n` +
+          `- **Status**: ${toolResult.session.is_active ? "ACTIVE" : "CLOSED"}\n` +
           `- **Date**: ${toolResult.session.session_date ? String(toolResult.session.session_date).slice(0, 10) : "Today"}\n` +
-          `- **Time**: ${toolResult.session.start_time} - ${toolResult.session.end_time}\n` +
-          `- **Present Window**: ${toolResult.session.present_window_minutes} minutes`;
+          `- **Time**: ${toolResult.session.start_time || "N/A"} - ${toolResult.session.end_time || "N/A"}`;
       } else if (toolResult.course) {
         replyText = `✓ **Course Created Successfully!**\n` +
           `- **Course Code**: ${toolResult.course.course_code}\n` +
@@ -641,15 +949,32 @@ export async function handleChatMessage(req: AuthRequest, res: Response): Promis
     const history = historyRows.rows.reverse();
     const q = userPrompt.toLowerCase();
 
-    // 2. DETECT MUTATING INTENTS FOR SIDE-EFFECT CONFIRMATIONS
+    // 2. DETECT DIAGNOSIS & MUTATING INTENTS FOR SIDE-EFFECT CONFIRMATIONS
     let pendingAction: { tool: string; args: Record<string, any>; description: string } | null = null;
     let pendingReply = "";
 
+    const isDiagnoseIntent = q.includes("diagnose") || q.includes("not accepting scans") || q.includes("can't scan") || q.includes("cant scan") || q.includes("session isn't") || q.includes("why is session") || q.includes("expired") || q.includes("issue");
     const isSessionCreateIntent = (q.includes("create") || q.includes("start") || q.includes("open") || q.includes("new")) && q.includes("session");
     const isSessionCloseIntent = (q.includes("close") || q.includes("end") || q.includes("stop")) && q.includes("session");
     const isCourseCreateIntent = (q.includes("create") || q.includes("add") || q.includes("new")) && q.includes("course");
 
-    if (isSessionCreateIntent) {
+    if (isDiagnoseIntent && (ctx.role === "lecturer" || ctx.role === "admin")) {
+      const diag: any = await toolDiagnoseSessionIssue(ctx, {});
+      if (diag.issueFound && diag.proposedTool) {
+        pendingAction = {
+          tool: diag.proposedTool,
+          args: diag.proposedArgs,
+          description: diag.proposedDescription,
+        };
+        pendingReply = `🔍 **Attendance Session Diagnostic Report**:\n\n` +
+          `I analyzed your session state for **${diag.courseCode}** (Session #${diag.sessionId}):\n` +
+          `- **Identified Issue**: ${diag.issue}\n` +
+          `- **Recommended Fix**: ${diag.recommendation}\n\n` +
+          `Would you like me to perform this fix now?`;
+      } else {
+        pendingReply = `🔍 **Attendance Session Diagnostic Report**:\n\n${diag.diagnosis || "All attendance sessions for your assigned courses are running normally."}`;
+      }
+    } else if (isSessionCreateIntent) {
       if (ctx.role !== "lecturer" && ctx.role !== "admin") {
         pendingReply = "⚠️ Access Denied: Only Lecturers and Administrators can create attendance sessions.";
       } else {
@@ -695,7 +1020,7 @@ export async function handleChatMessage(req: AuthRequest, res: Response): Promis
       }
     }
 
-    if (pendingReply && (pendingAction || pendingReply.includes("Access Denied"))) {
+    if (pendingReply && (pendingAction || pendingReply.includes("Access Denied") || pendingReply.includes("Diagnostic Report"))) {
       await pool.query(
         "INSERT INTO chat_messages (user_id, role, content, action_required, created_at) VALUES ($1, 'assistant', $2, $3, NOW())",
         [ctx.userId, pendingReply, pendingAction ? JSON.stringify(pendingAction) : null]
@@ -704,7 +1029,7 @@ export async function handleChatMessage(req: AuthRequest, res: Response): Promis
         reply: pendingReply,
         action_required: pendingAction,
         timestamp: new Date().toISOString(),
-        provider: "NBI-Confirmation-Engine",
+        provider: "NBI-Agent-Diagnosis-Engine",
       });
       return;
     }
